@@ -1,6 +1,6 @@
 {
   "collections": {
-    "agent_types": {
+    "admin_agent_types": {
       "indexes": [
         {
           "name": "name_unique",

@@ -43,7 +43,7 @@ func seedSessionDoc(t *testing.T, srv *Server, id, agentID, chatID, title string
 	if turnUpdatedAt != nil {
 		doc = append(doc, bson.E{Key: "turn_updated_at", Value: *turnUpdatedAt})
 	}
-	if _, err := srv.store.DB().Collection("agent_sessions").InsertOne(context.Background(), doc); err != nil {
+	if _, err := srv.store.DB().Collection("portal_sessions").InsertOne(context.Background(), doc); err != nil {
 		t.Fatalf("seed session %s: %v", id, err)
 	}
 }
@@ -257,7 +257,7 @@ func TestRestAgentsAttention_Shape(t *testing.T) {
 	seedSessionDoc(t, srv, "web:chat-3", "agent-2", "chat-3", "", []string{"a"}, false, nil, now)
 
 	// A pending question in the meta blob is what "awaiting" reads.
-	if _, err := srv.store.DB().Collection("agent_sessions").UpdateOne(context.Background(),
+	if _, err := srv.store.DB().Collection("portal_sessions").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "web:chat-1"}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "meta", Value: `{"_pending_question":"{\"text\":\"pick\"}"}`}}}},
 	); err != nil {

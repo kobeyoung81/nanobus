@@ -18,7 +18,7 @@ import (
 
 func seedAgentTypeDoc(t *testing.T, s *Server, id string, seeded bool) {
 	t.Helper()
-	if _, err := s.store.DB().Collection("agent_types").InsertOne(context.Background(), bson.D{
+	if _, err := s.store.DB().Collection("admin_agent_types").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id}, {Key: "name", Value: id}, {Key: "seeded", Value: seeded},
 		{Key: "strategy", Value: "react"}, {Key: "context", Value: "windowed"},
 		{Key: "output", Value: "stream"}, {Key: "session_binding", Value: "shared"},

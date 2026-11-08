@@ -33,8 +33,8 @@ type AgentRecord struct {
 }
 
 const (
-	agentsCollection        = "agents"
-	bindingAgentsCollection = "binding_agent_preferences"
+	agentsCollection        = "portal_agents"
+	bindingAgentsCollection = "portal_binding_preferences"
 )
 
 // storedSessionAgent is one entry of an agent's switchable session agents.

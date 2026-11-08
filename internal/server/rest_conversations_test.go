@@ -155,9 +155,9 @@ func listConversations(t *testing.T, srv *Server, query string) []conversationRo
 func TestRestListConversations_FiltersByOneConditionAtATime(t *testing.T) {
 	srv := testServerMongo(t)
 	storetest.SeedUser(t, srv.store, "user-1", "pro", 1)
-	setName(t, srv, "users", "user-1", "Bob")
+	setName(t, srv, "auth_users", "user-1", "Bob")
 	storetest.SeedAgents(t, srv.store, "user-1", "agent-1", "agent-2")
-	setName(t, srv, "agents", "agent-1", "Ada's agent")
+	setName(t, srv, "portal_agents", "agent-1", "Ada's agent")
 
 	seedSessionDoc(t, srv, "web:chat-1", "agent-1", "chat-1", "T", []string{"a"}, false, nil, timeNowUTC())
 	seedSessionDoc(t, srv, "web:chat-2", "agent-2", "chat-2", "T", []string{"b"}, false, nil, timeNowUTC())

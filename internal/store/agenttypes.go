@@ -30,7 +30,7 @@ func (s *Store) DefaultAgentTypeID() string { return DefaultAgentTypeID }
 // only way to write them together in SQL was the transaction SaveAgentType
 // opened, and a standalone MongoDB has none. As one document, every write is a
 // single update, so a type can never be read with half of its capabilities.
-const agentTypesCollection = "agent_types"
+const agentTypesCollection = "admin_agent_types"
 
 // storedPermissionRule is a permission rule as stored.
 //
@@ -817,7 +817,7 @@ func (s *Store) SeedAgentTypes(defs []nanoprotocol.AgentTypeDef) (inserted int, 
 
 // ======== permission keys ========
 
-const permissionKeysCollection = "permission_keys"
+const permissionKeysCollection = "admin_permission_keys"
 
 // storedPermissionKey is a catalog entry.
 //

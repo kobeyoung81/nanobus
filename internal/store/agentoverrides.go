@@ -14,7 +14,7 @@ import (
 
 // agentTypeOverridesCollection holds the user plane of the type resolution: what
 // one agent has changed about one mode.
-const agentTypeOverridesCollection = "agent_type_overrides"
+const agentTypeOverridesCollection = "admin_agent_type_overrides"
 
 // storedCapabilityAttachment is one capability as the user set it on a mode.
 type storedCapabilityAttachment struct {

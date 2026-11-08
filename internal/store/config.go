@@ -17,7 +17,7 @@ import (
 // ConfigItem mirrors nanoprotocol.ConfigItem for store operations.
 type ConfigItem = nanoprotocol.ConfigItem
 
-const configItemsCollection = "service_config_items"
+const configItemsCollection = "admin_config"
 
 // storedConfigItem is the document shape.
 //

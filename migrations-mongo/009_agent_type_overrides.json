@@ -1,6 +1,6 @@
 {
   "collections": {
-    "agent_type_overrides": {
+    "admin_agent_type_overrides": {
       "indexes": [
         {
           "name": "agent_type_unique",

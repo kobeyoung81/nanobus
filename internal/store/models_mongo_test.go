@@ -162,7 +162,7 @@ func TestUpdateModelProvider_KeepsTheStoredKey(t *testing.T) {
 		CreatedAt time.Time `bson:"created_at"`
 		UpdatedAt time.Time `bson:"updated_at"`
 	}
-	if err := s.DB().Collection("model_providers").
+	if err := s.DB().Collection("admin_model_providers").
 		FindOne(context.Background(), bson.D{{Key: "_id", Value: id}}).Decode(&doc); err != nil {
 		t.Fatalf("read provider: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestDeleteModelProvider_CascadesToModels(t *testing.T) {
 		t.Fatalf("DeleteModelProvider: %v", err)
 	}
 
-	if n, err := s.DB().Collection("models").CountDocuments(ctx, bson.D{}); err != nil || n != 0 {
+	if n, err := s.DB().Collection("admin_models").CountDocuments(ctx, bson.D{}); err != nil || n != 0 {
 		t.Fatalf("the models did not go with the provider: %d (err %v)", n, err)
 	}
 	// And the provider is gone.
@@ -414,7 +414,7 @@ func TestListVisibleModels_JoinsTheProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create model: %v", err)
 	}
-	if _, err := s.DB().Collection("models").UpdateOne(ctx,
+	if _, err := s.DB().Collection("admin_models").UpdateOne(ctx,
 		bson.D{{Key: "_id", Value: orphanID}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "provider_id", Value: int64(999)}}}},
 	); err != nil {
@@ -451,25 +451,25 @@ func TestListVisibleModels_Empty(t *testing.T) {
 func TestMigrations_DeclareModelIndexes(t *testing.T) {
 	s := storetest.Connect(t)
 
-	assertIndexKeys(t, s.DB().Collection("model_providers"), "scope_owner_name_unique", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_model_providers"), "scope_owner_name_unique", [][2]any{
 		{"scope", int32(1)}, {"owner_user_id", int32(1)}, {"name", int32(1)},
 	})
-	assertIndexUnique(t, s.DB().Collection("model_providers"), "scope_owner_name_unique")
-	assertIndexKeys(t, s.DB().Collection("model_providers"), "scope_name", [][2]any{
+	assertIndexUnique(t, s.DB().Collection("admin_model_providers"), "scope_owner_name_unique")
+	assertIndexKeys(t, s.DB().Collection("admin_model_providers"), "scope_name", [][2]any{
 		{"scope", int32(1)}, {"name", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("model_providers"), "scope_owner_name", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_model_providers"), "scope_owner_name", [][2]any{
 		{"scope", int32(1)}, {"owner_user_id", int32(1)}, {"name", int32(1)},
 	})
 
-	assertIndexKeys(t, s.DB().Collection("models"), "provider_name_unique", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_models"), "provider_name_unique", [][2]any{
 		{"provider_id", int32(1)}, {"name", int32(1)},
 	})
-	assertIndexUnique(t, s.DB().Collection("models"), "provider_name_unique")
-	assertIndexKeys(t, s.DB().Collection("models"), "scope_name", [][2]any{
+	assertIndexUnique(t, s.DB().Collection("admin_models"), "provider_name_unique")
+	assertIndexKeys(t, s.DB().Collection("admin_models"), "scope_name", [][2]any{
 		{"scope", int32(1)}, {"name", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("models"), "scope_owner_name", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_models"), "scope_owner_name", [][2]any{
 		{"scope", int32(1)}, {"owner_user_id", int32(1)}, {"name", int32(1)},
 	})
 }

@@ -17,7 +17,7 @@ import (
 
 func seedRunnerDoc(t *testing.T, s *Server, id, hostname, status string, registeredAt time.Time) {
 	t.Helper()
-	if _, err := s.store.DB().Collection("runners").InsertOne(context.Background(), bson.D{
+	if _, err := s.store.DB().Collection("provisioner_runners").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id},
 		{Key: "hostname", Value: hostname},
 		{Key: "docker_host", Value: "local"},
@@ -41,7 +41,7 @@ func seedContainerDoc(t *testing.T, s *Server, userID, level, status, runnerID s
 	if runnerID != "" {
 		doc = append(doc, bson.E{Key: "runner_id", Value: runnerID})
 	}
-	if _, err := s.store.DB().Collection("container_requests").InsertOne(context.Background(), doc); err != nil {
+	if _, err := s.store.DB().Collection("provisioner_container_requests").InsertOne(context.Background(), doc); err != nil {
 		t.Fatalf("seed container for %s: %v", userID, err)
 	}
 }

@@ -71,7 +71,7 @@ func seedVoiceConfigItems(t *testing.T, s *Server, items []store.ConfigItem) {
 func seedProvider(t *testing.T, s *Server, id int64, scope, name, baseURL, apiKey string) {
 	t.Helper()
 	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("model_providers").InsertOne(context.Background(), bson.D{
+	if _, err := s.store.DB().Collection("admin_model_providers").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id},
 		{Key: "scope", Value: scope},
 		{Key: "owner_user_id", Value: ""},
@@ -89,7 +89,7 @@ func seedProvider(t *testing.T, s *Server, id int64, scope, name, baseURL, apiKe
 func seedChatModel(t *testing.T, s *Server, id, providerID int64, name, model string) {
 	t.Helper()
 	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("models").InsertOne(context.Background(), bson.D{
+	if _, err := s.store.DB().Collection("admin_models").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id},
 		{Key: "provider_id", Value: providerID},
 		{Key: "scope", Value: "platform"},

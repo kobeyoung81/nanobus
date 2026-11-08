@@ -30,7 +30,7 @@ func seedHead(t *testing.T, s *store.Store, scope, ownerID, content, baselineHas
 		{Key: "baseline_version", Value: 0},
 		{Key: "updated_at", Value: now},
 	}
-	if _, err := s.DB().Collection("session_head_prompts").InsertOne(context.Background(), doc); err != nil {
+	if _, err := s.DB().Collection("admin_prompts").InsertOne(context.Background(), doc); err != nil {
 		t.Fatalf("seed head %s/%s: %v", scope, ownerID, err)
 	}
 }
@@ -42,7 +42,7 @@ func readHead(t *testing.T, s *store.Store, scope, ownerID string) (string, stri
 		BaselineHash string    `bson:"baseline_hash"`
 		UpdatedAt    time.Time `bson:"updated_at"`
 	}
-	if err := s.DB().Collection("session_head_prompts").
+	if err := s.DB().Collection("admin_prompts").
 		FindOne(context.Background(), bson.D{{Key: "scope", Value: scope}, {Key: "owner_id", Value: ownerID}}).
 		Decode(&doc); err != nil {
 		t.Fatalf("read head %s/%s: %v", scope, ownerID, err)
@@ -128,7 +128,7 @@ func TestSaveSessionHead_RejectsEmptyAndUnknownScope(t *testing.T) {
 	if err := s.SaveSessionHead("mode", "", "text"); err == nil {
 		t.Fatal("an unknown scope was accepted")
 	}
-	n, err := s.DB().Collection("session_head_prompts").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("admin_prompts").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestSessionHead_IdentityIsScopeAndOwner(t *testing.T) {
 	s := storetest.Connect(t)
 	seedHead(t, s, store.PromptScopePlatform, "", "one head", "")
 
-	_, err := s.DB().Collection("session_head_prompts").InsertOne(context.Background(), bson.D{
+	_, err := s.DB().Collection("admin_prompts").InsertOne(context.Background(), bson.D{
 		{Key: "scope", Value: store.PromptScopePlatform},
 		{Key: "owner_id", Value: ""},
 		{Key: "content", Value: "a second head"},
@@ -221,7 +221,7 @@ func TestSeedSessionHead_ReplacesUnmodifiedSeed(t *testing.T) {
 	if content, _, _ := readHead(t, s, store.PromptScopePlatform, ""); content != "new bundled" {
 		t.Fatalf("content = %q", content)
 	}
-	n, err := s.DB().Collection("session_head_prompts").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("admin_prompts").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}

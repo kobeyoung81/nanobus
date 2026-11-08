@@ -50,7 +50,7 @@ func TestSyncBuiltinTools_BackfillsLegacyRowsOnly(t *testing.T) {
 
 	// A row inserted by a binary that announced no default: no updated_at,
 	// default_enabled left at zero.
-	if _, err := s.DB().Collection("builtin_tools").InsertOne(ctx, bson.D{
+	if _, err := s.DB().Collection("admin_builtin_tools").InsertOne(ctx, bson.D{
 		{Key: "_id", Value: "bash"}, {Key: "description", Value: "old"},
 		{Key: "default_enabled", Value: false}, {Key: "locked", Value: ""},
 	}); err != nil {
@@ -92,7 +92,7 @@ func TestSyncBuiltinTools_BackfillsLegacyRowsOnly(t *testing.T) {
 	var doc struct {
 		UpdatedAt time.Time `bson:"updated_at"`
 	}
-	if err := s.DB().Collection("builtin_tools").FindOne(ctx, bson.D{{Key: "_id", Value: "write"}}).Decode(&doc); err != nil {
+	if err := s.DB().Collection("admin_builtin_tools").FindOne(ctx, bson.D{{Key: "_id", Value: "write"}}).Decode(&doc); err != nil {
 		t.Fatalf("read write row: %v", err)
 	}
 	if doc.UpdatedAt.IsZero() {

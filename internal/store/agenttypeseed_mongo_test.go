@@ -96,7 +96,7 @@ func TestSeedAgentTypes_IsIdempotentAndKeepsEverything(t *testing.T) {
 
 	// The admin renames the description, sets a prompt and turns one of plan's
 	// baselines off.
-	if _, err := s.DB().Collection("agent_types").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("admin_agent_types").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "plan"}},
 		bson.D{{Key: "$set", Value: bson.D{
 			{Key: "description", Value: "our plan mode"},
@@ -145,7 +145,7 @@ func TestSeedAgentTypes_AddsOnlyMissingBaselines(t *testing.T) {
 
 	// An admin removes one baseline (the "inherit the platform default again"
 	// affordance), and disables the other.
-	if _, err := s.DB().Collection("agent_types").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("admin_agent_types").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "plan"}},
 		bson.D{{Key: "$pull", Value: bson.D{{Key: "capabilities", Value: bson.D{
 			{Key: "ref", Value: "readonly_task"},
@@ -153,7 +153,7 @@ func TestSeedAgentTypes_AddsOnlyMissingBaselines(t *testing.T) {
 	); err != nil {
 		t.Fatalf("pull baseline: %v", err)
 	}
-	if _, err := s.DB().Collection("agent_types").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("admin_agent_types").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "plan"}, {Key: "capabilities.ref", Value: "readonly_bash"}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "capabilities.$.locked", Value: "off"}}}},
 	); err != nil {

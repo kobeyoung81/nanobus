@@ -1,6 +1,6 @@
 {
   "collections": {
-    "session_head_prompts": {
+    "admin_prompts": {
       "indexes": [
         {
           "name": "scope_owner_unique",

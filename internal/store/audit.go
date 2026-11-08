@@ -46,8 +46,8 @@ type AlertRule struct {
 }
 
 const (
-	auditLogCollection   = "audit_log"
-	alertRulesCollection = "alert_rules"
+	auditLogCollection   = "admin_audit_log"
+	alertRulesCollection = "admin_alert_rules"
 )
 
 // auditLog returns the audit trail collection, configured so a decoded nested

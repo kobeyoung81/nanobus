@@ -10,7 +10,7 @@ import (
 
 // countersCollection holds the named counters that stand in for MySQL's
 // AUTO_INCREMENT.
-const countersCollection = "counters"
+const countersCollection = "sys_counters"
 
 // nextSequence returns the next value of a named counter.
 //

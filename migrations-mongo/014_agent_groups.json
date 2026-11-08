@@ -1,6 +1,6 @@
 {
   "collections": {
-    "agent_groups": {
+    "portal_agent_groups": {
       "indexes": [
         {
           "name": "user_position",

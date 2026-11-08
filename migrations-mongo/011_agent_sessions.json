@@ -1,6 +1,6 @@
 {
   "collections": {
-    "agent_sessions": {
+    "portal_sessions": {
       "indexes": [
         {
           "name": "agent_updated",

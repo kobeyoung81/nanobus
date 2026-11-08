@@ -525,24 +525,24 @@ func TestMigrations_DeclareCapabilityIndexes(t *testing.T) {
 	s := storetest.Connect(t)
 
 	// A skill name is unique globally (migration 050).
-	assertIndexKeys(t, s.DB().Collection("skills"), "name_unique", [][2]any{{"name", int32(1)}})
-	assertIndexUnique(t, s.DB().Collection("skills"), "name_unique")
+	assertIndexKeys(t, s.DB().Collection("admin_skills"), "name_unique", [][2]any{{"name", int32(1)}})
+	assertIndexUnique(t, s.DB().Collection("admin_skills"), "name_unique")
 	// The list queries filter (scope, owner) and order by name.
-	assertIndexKeys(t, s.DB().Collection("skills"), "scope_owner_name", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_skills"), "scope_owner_name", [][2]any{
 		{"scope", int32(1)}, {"owner_user_id", int32(1)}, {"name", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("mcp_servers"), "scope_owner_name", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_mcp_servers"), "scope_owner_name", [][2]any{
 		{"scope", int32(1)}, {"owner_user_id", int32(1)}, {"name", int32(1)},
 	})
 	// The two per-user tables keep their primary keys as unique indexes.
-	assertIndexKeys(t, s.DB().Collection("user_secrets"), "identity_unique", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("auth_secrets"), "identity_unique", [][2]any{
 		{"user_id", int32(1)}, {"capability_kind", int32(1)}, {"ref", int32(1)}, {"secret_key", int32(1)},
 	})
-	assertIndexUnique(t, s.DB().Collection("user_secrets"), "identity_unique")
-	assertIndexKeys(t, s.DB().Collection("user_skill_acks"), "user_skill_unique", [][2]any{
+	assertIndexUnique(t, s.DB().Collection("auth_secrets"), "identity_unique")
+	assertIndexKeys(t, s.DB().Collection("admin_user_skill_acks"), "user_skill_unique", [][2]any{
 		{"user_id", int32(1)}, {"skill_id", int32(1)},
 	})
-	assertIndexUnique(t, s.DB().Collection("user_skill_acks"), "user_skill_unique")
+	assertIndexUnique(t, s.DB().Collection("admin_user_skill_acks"), "user_skill_unique")
 }
 
 // TestUserSecret_IdentityIsUnique pins the four-field unique index a secret's
@@ -555,7 +555,7 @@ func TestUserSecret_IdentityIsUnique(t *testing.T) {
 			t.Fatalf("UpsertUserSecret: %v", err)
 		}
 	}
-	n, err := s.DB().Collection("user_secrets").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("auth_secrets").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count secrets: %v", err)
 	}

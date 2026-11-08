@@ -20,7 +20,7 @@ func TestRestListAgentFleet(t *testing.T) {
 	srv := testServerMongo(t)
 	base := time.Now().UTC()
 	for _, a := range []struct{ id, user string }{{"agent-1", "u-1"}, {"agent-2", "u-2"}} {
-		if _, err := srv.store.DB().Collection("agents").InsertOne(context.Background(), bson.D{
+		if _, err := srv.store.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
 			{Key: "_id", Value: a.id},
 			{Key: "user_id", Value: a.user},
 			{Key: "type_id", Value: "build"},
@@ -33,7 +33,7 @@ func TestRestListAgentFleet(t *testing.T) {
 		}
 	}
 	// The newer one sorts first.
-	if _, err := srv.store.DB().Collection("agents").UpdateOne(context.Background(),
+	if _, err := srv.store.DB().Collection("portal_agents").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "agent-2"}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "updated_at", Value: base}}}},
 	); err != nil {
@@ -83,11 +83,11 @@ func TestRestUserActivity(t *testing.T) {
 		// A queued message with no user says nothing about anybody.
 		{{Key: "created_at", Value: base}, {Key: "status", Value: "claimed"}},
 	} {
-		if _, err := srv.store.DB().Collection("inbound_queue").InsertOne(context.Background(), doc); err != nil {
+		if _, err := srv.store.DB().Collection("bus_inbound_queue").InsertOne(context.Background(), doc); err != nil {
 			t.Fatalf("seed inbound: %v", err)
 		}
 	}
-	if _, err := srv.store.DB().Collection("outbound_queue").InsertOne(context.Background(), bson.D{
+	if _, err := srv.store.DB().Collection("bus_outbound_queue").InsertOne(context.Background(), bson.D{
 		{Key: "user_id", Value: "u-1"}, {Key: "created_at", Value: base.Add(-time.Hour)}, {Key: "status", Value: "done"},
 	}); err != nil {
 		t.Fatalf("seed outbound: %v", err)

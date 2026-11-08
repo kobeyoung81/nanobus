@@ -1,6 +1,6 @@
 {
   "collections": {
-    "audit_log": {
+    "admin_audit_log": {
       "indexes": [
         {
           "name": "created_at_desc",
@@ -20,7 +20,7 @@
         }
       ]
     },
-    "alert_rules": {
+    "admin_alert_rules": {
       "indexes": [
         {
           "name": "enabled_order",

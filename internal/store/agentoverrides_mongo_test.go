@@ -232,11 +232,11 @@ func TestSetAgentTypeOverride_AcceptsAllowlistAfterWildcardDeny(t *testing.T) {
 func TestMigrations_DeclareOverrideIndexes(t *testing.T) {
 	s := storetest.Connect(t)
 
-	assertIndexKeys(t, s.DB().Collection("agent_type_overrides"), "agent_type_unique", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_agent_type_overrides"), "agent_type_unique", [][2]any{
 		{"agent_id", int32(1)}, {"type_id", int32(1)},
 	})
-	assertIndexUnique(t, s.DB().Collection("agent_type_overrides"), "agent_type_unique")
-	assertIndexKeys(t, s.DB().Collection("agent_type_overrides"), "type_id", [][2]any{{"type_id", int32(1)}})
+	assertIndexUnique(t, s.DB().Collection("admin_agent_type_overrides"), "agent_type_unique")
+	assertIndexKeys(t, s.DB().Collection("admin_agent_type_overrides"), "type_id", [][2]any{{"type_id", int32(1)}})
 }
 
 // TestEffectiveTypeSettings_OverrideWins is the resolution the store exposes on

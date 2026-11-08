@@ -154,7 +154,7 @@ func TestSetConfigItem_InsertDefaults(t *testing.T) {
 func TestConfigItems_UniquePerComponentAndKey(t *testing.T) {
 	s := storetest.Connect(t)
 	ctx := context.Background()
-	coll := s.DB().Collection("service_config_items")
+	coll := s.DB().Collection("admin_config")
 
 	_, err := coll.InsertOne(ctx, bson.D{
 		{Key: "component_type", Value: "nanosec"},
@@ -189,7 +189,7 @@ func TestConfigItems_UniquePerComponentAndKey(t *testing.T) {
 func TestMigrations_DeclareConfigIndexes(t *testing.T) {
 	s := storetest.Connect(t)
 
-	cur, err := s.DB().Collection("service_config_items").Indexes().List(context.Background())
+	cur, err := s.DB().Collection("admin_config").Indexes().List(context.Background())
 	if err != nil {
 		t.Fatalf("list indexes: %v", err)
 	}

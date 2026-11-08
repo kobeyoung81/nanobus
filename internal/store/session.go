@@ -54,7 +54,7 @@ type SessionRecord struct {
 	MessagesOmitted bool
 }
 
-const agentSessionsCollection = "agent_sessions"
+const agentSessionsCollection = "portal_sessions"
 
 // storedSession is a session document.
 //

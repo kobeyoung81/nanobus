@@ -25,7 +25,7 @@ var (
 )
 
 const (
-	agentGroupsCollection = "agent_groups"
+	agentGroupsCollection = "portal_agent_groups"
 	// MaxAgentGroupsPerUser bounds the sidebar's group count. It is a guard
 	// against runaway clients, not a product constraint.
 	MaxAgentGroupsPerUser = 100

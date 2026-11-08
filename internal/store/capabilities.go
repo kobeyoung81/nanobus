@@ -53,7 +53,7 @@ var errCapNotFound = fmt.Errorf("capability not found")
 
 // ======== builtin tools ========
 
-const builtinToolsCollection = "builtin_tools"
+const builtinToolsCollection = "admin_builtin_tools"
 
 // storedBuiltinTool is a tool definition document.
 //
@@ -240,7 +240,7 @@ func (s *Store) completeRestrictedBelts(ctx context.Context, kind string, refs [
 
 // ======== mcp servers ========
 
-const mcpServersCollection = "mcp_servers"
+const mcpServersCollection = "admin_mcp_servers"
 
 // storedMcpServer is an MCP server document.
 type storedMcpServer struct {
@@ -499,7 +499,7 @@ func (s *Store) DeleteMcp(id string, ownerUserID, scope string) error {
 
 // ======== skills ========
 
-const skillsCollection = "skills"
+const skillsCollection = "admin_skills"
 
 // storedSkill is a skill document.
 //

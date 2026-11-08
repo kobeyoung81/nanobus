@@ -224,7 +224,7 @@ func TestSaveAgentType_KeepsSeededStructure(t *testing.T) {
 	seedType(t, s, "build", "", "")
 
 	// The insert above leaves seeded unset; stamp it the way the seeder does.
-	if _, err := s.DB().Collection("agent_types").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("admin_agent_types").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "build"}},
 		bson.D{{Key: "$set", Value: bson.D{
 			{Key: "seeded", Value: true},
@@ -289,7 +289,7 @@ func typeTimes(t *testing.T, s *store.Store, id string) (created, updated time.T
 		UpdatedAt     time.Time `bson:"updated_at"`
 		PromptVersion int       `bson:"prompt_version"`
 	}
-	if err := s.DB().Collection("agent_types").
+	if err := s.DB().Collection("admin_agent_types").
 		FindOne(context.Background(), bson.D{{Key: "_id", Value: id}}).Decode(&doc); err != nil {
 		t.Fatalf("read type times %s: %v", id, err)
 	}
@@ -562,7 +562,7 @@ func TestSetTypeCapabilityState_UnknownType(t *testing.T) {
 	if err := s.SetTypeCapabilityState("ghost", "skill", "docs", true, ""); err == nil {
 		t.Fatal("expected an error for an unknown type")
 	}
-	n, err := s.DB().Collection("agent_types").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("admin_agent_types").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count types: %v", err)
 	}
@@ -600,7 +600,7 @@ func TestDeleteTypeCapabilityState(t *testing.T) {
 func TestDeleteAgentType_RefusesSeeded(t *testing.T) {
 	s := storetest.Connect(t)
 	seedType(t, s, "build", "", "")
-	if _, err := s.DB().Collection("agent_types").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("admin_agent_types").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "build"}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "seeded", Value: true}}}},
 	); err != nil {
@@ -662,8 +662,8 @@ func TestDeleteAgentType_ClearsTheAgentsThatUsedIt(t *testing.T) {
 func TestMigrations_DeclareAgentTypeIndexes(t *testing.T) {
 	s := storetest.Connect(t)
 
-	assertIndexKeys(t, s.DB().Collection("agent_types"), "name_unique", [][2]any{{"name", int32(1)}})
-	assertIndexKeys(t, s.DB().Collection("agent_types"), "session_catalog", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_agent_types"), "name_unique", [][2]any{{"name", int32(1)}})
+	assertIndexKeys(t, s.DB().Collection("admin_agent_types"), "session_catalog", [][2]any{
 		{"output", int32(1)}, {"session_binding", int32(1)}, {"name", int32(1)},
 	})
 }

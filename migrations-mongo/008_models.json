@@ -1,6 +1,6 @@
 {
   "collections": {
-    "model_providers": {
+    "admin_model_providers": {
       "indexes": [
         {
           "name": "scope_owner_name_unique",
@@ -17,7 +17,7 @@
         }
       ]
     },
-    "models": {
+    "admin_models": {
       "indexes": [
         {
           "name": "provider_name_unique",

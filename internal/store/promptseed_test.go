@@ -38,7 +38,7 @@ func seedType(t *testing.T, s *store.Store, id, promptText, baselineHash string)
 	if baselineHash != "" {
 		doc = append(doc, bson.E{Key: "prompt_hash", Value: baselineHash})
 	}
-	if _, err := s.DB().Collection("agent_types").InsertOne(context.Background(), doc); err != nil {
+	if _, err := s.DB().Collection("admin_agent_types").InsertOne(context.Background(), doc); err != nil {
 		t.Fatalf("seed type %s: %v", id, err)
 	}
 }
@@ -49,7 +49,7 @@ func readType(t *testing.T, s *store.Store, id string) (string, string) {
 		Prompt     string `bson:"prompt"`
 		PromptHash string `bson:"prompt_hash"`
 	}
-	if err := s.DB().Collection("agent_types").
+	if err := s.DB().Collection("admin_agent_types").
 		FindOne(context.Background(), bson.D{{Key: "_id", Value: id}}).Decode(&doc); err != nil {
 		t.Fatalf("read type %s: %v", id, err)
 	}
@@ -165,7 +165,7 @@ func TestSeedPlatformPrompts_IdempotentAndUnknownType(t *testing.T) {
 	if updated != 0 || skipped != 2 {
 		t.Fatalf("updated=%d skipped=%d, want 0/2", updated, skipped)
 	}
-	n, err := s.DB().Collection("agent_types").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("admin_agent_types").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count types: %v", err)
 	}

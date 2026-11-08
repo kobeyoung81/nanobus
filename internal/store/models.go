@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	modelProvidersCollection = "model_providers"
-	modelsCollection         = "models"
+	modelProvidersCollection = "admin_model_providers"
+	modelsCollection         = "admin_models"
 )
 
 // Errors the catalog actions report to the console as 404/400 rather than 500.

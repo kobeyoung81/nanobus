@@ -311,18 +311,18 @@ func TestMigrations_DeclareAuditIndexes(t *testing.T) {
 	// The list query sorts on (created_at desc, _id desc): both fields have to
 	// be in the key, or the order stops being deterministic for entries written
 	// within the same clock tick.
-	assertIndexKeys(t, s.DB().Collection("audit_log"), "created_at_desc", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_audit_log"), "created_at_desc", [][2]any{
 		{"created_at", int32(-1)}, {"_id", int32(-1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("alert_rules"), "enabled_order", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_alert_rules"), "enabled_order", [][2]any{
 		{"enabled", int32(1)}, {"_id", int32(1)},
 	})
 
 	// The three single-field indexes the SQL table carried, kept because the
 	// admin UI filters the audit trail by each of them.
-	assertIndexKeys(t, s.DB().Collection("audit_log"), "action", [][2]any{{"action", int32(1)}})
-	assertIndexKeys(t, s.DB().Collection("audit_log"), "actor_id", [][2]any{{"actor_id", int32(1)}})
-	assertIndexKeys(t, s.DB().Collection("audit_log"), "resource", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("admin_audit_log"), "action", [][2]any{{"action", int32(1)}})
+	assertIndexKeys(t, s.DB().Collection("admin_audit_log"), "actor_id", [][2]any{{"actor_id", int32(1)}})
+	assertIndexKeys(t, s.DB().Collection("admin_audit_log"), "resource", [][2]any{
 		{"resource_type", int32(1)}, {"resource_id", int32(1)},
 	})
 }
@@ -403,7 +403,7 @@ func TestListAudit_ResolvesActorNames(t *testing.T) {
 	s := storetest.Connect(t)
 	storetest.SeedUser(t, s, "u-1", "pro", 1)
 	// SeedUser leaves the display name unset, so set one the way the console would.
-	if _, err := s.DB().Collection("users").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("auth_users").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "u-1"}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "display_name", Value: "Ada"}}}},
 	); err != nil {

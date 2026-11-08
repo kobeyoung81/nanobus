@@ -1,6 +1,6 @@
 {
   "collections": {
-    "agents": {
+    "portal_agents": {
       "indexes": [
         {
           "name": "user_status_created",

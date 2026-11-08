@@ -41,7 +41,7 @@ func accountRequest(t *testing.T, s *Server, method, target string, body any) *h
 
 func setRole(t *testing.T, s *Server, userID, role string) {
 	t.Helper()
-	if _, err := s.store.DB().Collection("users").UpdateOne(context.Background(),
+	if _, err := s.store.DB().Collection("auth_users").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: userID}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "role", Value: role}}}},
 	); err != nil {
@@ -259,7 +259,7 @@ func TestRestUserPassword(t *testing.T) {
 	var doc struct {
 		MustChange bool `bson:"must_change_password"`
 	}
-	if err := srv.store.DB().Collection("users").
+	if err := srv.store.DB().Collection("auth_users").
 		FindOne(context.Background(), bson.D{{Key: "_id", Value: "u-1"}}).Decode(&doc); err != nil {
 		t.Fatalf("read user: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestRestSearchUserAccounts(t *testing.T) {
 	seed := func(id, name, email string, binding int64) {
 		t.Helper()
 		storetest.SeedUser(t, srv.store, id, "free", binding)
-		if _, err := srv.store.DB().Collection("users").UpdateOne(context.Background(),
+		if _, err := srv.store.DB().Collection("auth_users").UpdateOne(context.Background(),
 			bson.D{{Key: "_id", Value: id}},
 			bson.D{{Key: "$set", Value: bson.D{
 				{Key: "display_name", Value: name},

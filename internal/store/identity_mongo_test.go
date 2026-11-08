@@ -340,7 +340,7 @@ func TestIdentityCollectionsAreMigrated(t *testing.T) {
 		t.Fatalf("load manifests: %v", err)
 	}
 	wanted := map[string]bool{
-		"oauth_providers": false, "git_browser_shortcuts": false, "refresh_tokens": false,
+		"auth_oauth_providers": false, "auth_git_shortcuts": false, "auth_refresh_tokens": false,
 	}
 	for name, raw := range manifests {
 		var manifest struct {

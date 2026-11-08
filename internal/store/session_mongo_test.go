@@ -57,7 +57,7 @@ func readSessionDoc(t *testing.T, s *store.Store, id string) struct {
 		TurnRunning   bool      `bson:"turn_running"`
 		CreatedAt     time.Time `bson:"created_at"`
 	}
-	if err := s.DB().Collection("agent_sessions").
+	if err := s.DB().Collection("portal_sessions").
 		FindOne(context.Background(), bson.D{{Key: "_id", Value: id}}).Decode(&doc); err != nil {
 		t.Fatalf("read session %s: %v", id, err)
 	}
@@ -72,7 +72,7 @@ func seedSession(t *testing.T, s *store.Store, id, agentID, chatID, status strin
 	if err := json.Unmarshal([]byte(messagesJSON(t, messages...)), &decoded); err != nil {
 		t.Fatalf("decode messages: %v", err)
 	}
-	if _, err := s.DB().Collection("agent_sessions").InsertOne(context.Background(), bson.D{
+	if _, err := s.DB().Collection("portal_sessions").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id},
 		{Key: "agent_id", Value: agentID},
 		{Key: "account_id", Value: "user-1"},
@@ -582,13 +582,13 @@ func TestMigrations_DeclareSessionIndexes(t *testing.T) {
 
 	// The listing filters one agent and sorts (updated_at desc, _id desc) — all
 	// three are in the key, so the sort is index-served and paging stays cheap.
-	assertIndexKeys(t, s.DB().Collection("agent_sessions"), "agent_updated", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("portal_sessions"), "agent_updated", [][2]any{
 		{"agent_id", int32(1)}, {"updated_at", int32(-1)}, {"_id", int32(-1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("agent_sessions"), "agent_channel_chat", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("portal_sessions"), "agent_channel_chat", [][2]any{
 		{"agent_id", int32(1)}, {"channel", int32(1)}, {"chat_id", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("agent_sessions"), "agent_status", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("portal_sessions"), "agent_status", [][2]any{
 		{"agent_id", int32(1)}, {"status", int32(1)},
 	})
 }

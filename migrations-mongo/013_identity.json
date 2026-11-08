@@ -1,6 +1,6 @@
 {
   "collections": {
-    "oauth_providers": {
+    "auth_oauth_providers": {
       "indexes": [
         {
           "name": "provider_identity_unique",
@@ -13,7 +13,7 @@
         }
       ]
     },
-    "git_browser_shortcuts": {
+    "auth_git_shortcuts": {
       "indexes": [
         {
           "name": "path_unique",
@@ -27,7 +27,7 @@
         }
       ]
     },
-    "refresh_tokens": {
+    "auth_refresh_tokens": {
       "indexes": [
         {
           "name": "user_tokens",

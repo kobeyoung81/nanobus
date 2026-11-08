@@ -18,7 +18,7 @@ import (
 func TestRestRecordAudit(t *testing.T) {
 	srv := testServerMongo(t)
 	storetest.SeedUser(t, srv.store, "u-1", "pro", 1)
-	if _, err := srv.store.DB().Collection("users").UpdateOne(context.Background(),
+	if _, err := srv.store.DB().Collection("auth_users").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "u-1"}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "display_name", Value: "Ada"}}}},
 	); err != nil {
@@ -106,9 +106,9 @@ func TestRestListAudit_FiltersByOneConditionAtATime(t *testing.T) {
 	storetest.SeedUser(t, srv.store, "u-1", "pro", 1)
 	storetest.SeedUser(t, srv.store, "u-2", "pro", 2)
 	storetest.SeedAgents(t, srv.store, "u-2", "agent-1")
-	setName(t, srv, "users", "u-1", "Ada")
-	setName(t, srv, "users", "u-2", "Bob")
-	setName(t, srv, "agents", "agent-1", "ops-bot")
+	setName(t, srv, "auth_users", "u-1", "Ada")
+	setName(t, srv, "auth_users", "u-2", "Bob")
+	setName(t, srv, "portal_agents", "agent-1", "ops-bot")
 
 	for _, entry := range []map[string]any{
 		{"actor_id": "u-1", "actor_role": "admin", "action": "agent.delete", "resource_type": "agent", "resource_id": "agent-1"},

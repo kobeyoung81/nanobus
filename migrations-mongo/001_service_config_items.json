@@ -1,6 +1,6 @@
 {
   "collections": {
-    "service_config_items": {
+    "admin_config": {
       "indexes": [
         {
           "name": "component_key_unique",

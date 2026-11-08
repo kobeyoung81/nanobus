@@ -37,8 +37,8 @@ type ResolvedBinding struct {
 }
 
 const (
-	usersCollection             = "users"
-	containerRequestsCollection = "container_requests"
+	usersCollection             = "auth_users"
+	containerRequestsCollection = "provisioner_container_requests"
 
 	// bindingIDSequence names the counter that stands in for the AUTO_INCREMENT
 	// that user_channels.binding_id was. The value is not internal: container
@@ -504,7 +504,7 @@ func (s *Store) SetUserRole(userID, role string) error { return s.setUserField(u
 
 // systemFlagsCollection holds one-shot per-installation flags. They are not
 // account state, which is why they are not fields on any user.
-const systemFlagsCollection = "system_flags"
+const systemFlagsCollection = "sys_flags"
 
 // bootstrapAdminFlag is the flag that says this installation has already given
 // its administrator role to the first account created through a sign-up.

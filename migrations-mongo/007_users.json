@@ -1,6 +1,6 @@
 {
   "collections": {
-    "users": {
+    "auth_users": {
       "indexes": [
         {
           "name": "channel_identity_unique",
@@ -49,7 +49,7 @@
         }
       ]
     },
-    "container_requests": {
+    "provisioner_container_requests": {
       "indexes": [
         {
           "name": "binding_unique",

@@ -12,7 +12,7 @@ WebSocket message broker with MongoDB storage for MyriadMind.
 - **Service configuration** — key-value config store for all cluster services
 - **Runner registry** — track Docker / Swarm / Kubernetes provisioning instances
 - **WeChat KF sync state** — cursor and token persistence for chat platform sync
-- **Agent registry & sessions** — per-user agents and their `agent_sessions`
+- **Agent registry & sessions** — per-user agents and their `portal_sessions` projection
 - **Enterprise data** — audit log, alert rules
 
 ## Architecture
@@ -26,9 +26,9 @@ Portal  --HTTP---------->     |-- proxy_auth.go  (/auth/v1/* -> nanoauth)
                               |-- store/
                               |   |-- user.go      (user registry, auto-onboarding)
                               |   |-- queue.go     (inbound/outbound queues, FOR UPDATE)
-                              |   |-- config.go    (service_config_items CRUD)
+                              |   |-- config.go    (admin_config CRUD)
                               |   |-- agent.go     (agent registry)
-                              |   |-- session.go   (agent_sessions)
+                              |   |-- session.go   (portal_sessions)
                               |   |-- audit.go     (audit_log)
                               |   |-- runner.go    (runner registration + heartbeat)
                               |   |-- wechatkf_state.go (sync cursor + callback token)
@@ -42,23 +42,24 @@ Portal  --HTTP---------->     |-- proxy_auth.go  (/auth/v1/* -> nanoauth)
 MongoDB is the only store. The collections and their indexes are declared by the
 manifests in `migrations-mongo/`, embedded with `go:embed` and applied in filename
 order by `nanobus migrate up`; the applied names are recorded in the
-`schema_migrations` collection.
+`sys_migrations` collection, one document per service (bus and nanoartifacts share it).
 
 | Manifest | Collections |
 |----------|-------------|
-| 001 | `service_config_items` |
-| 002 | `agents` |
-| 003 | `audit_log`, `alert_rules` |
-| 004 | `runners` |
-| 005 | `agent_types` |
-| 006 | `inbound_queue`, `outbound_queue` |
-| 007 | `users`, `container_requests` |
-| 008 | `models`, `model_providers` |
-| 009 | `agent_type_overrides` |
-| 010 | `mcp_servers`, `skills`, `user_secrets`, `user_skill_acks` |
-| 011 | `agent_sessions` |
-| 012 | `session_head_prompts` |
-| 013 | `oauth_providers`, `git_browser_shortcuts`, `refresh_tokens` |
+| 001 | `admin_config` |
+| 002 | `portal_agents` |
+| 003 | `admin_audit_log`, `admin_alert_rules` |
+| 004 | `provisioner_runners` |
+| 005 | `admin_agent_types` |
+| 006 | `bus_inbound_queue`, `bus_outbound_queue` |
+| 007 | `auth_users`, `provisioner_container_requests` |
+| 008 | `admin_models`, `admin_model_providers` |
+| 009 | `admin_agent_type_overrides` |
+| 010 | `admin_mcp_servers`, `admin_skills`, `auth_secrets`, `admin_user_skill_acks` |
+| 011 | `portal_sessions` |
+| 012 | `admin_prompts` |
+| 013 | `auth_oauth_providers`, `auth_git_shortcuts`, `auth_refresh_tokens` |
+| 014 | `portal_agent_groups` |
 
 A manifest is declarative — it names the indexes a collection must have (and
 optionally a validator). Creating an index that already exists is a no-op, so a
@@ -87,11 +88,11 @@ provisioning path recovers from.
 
 ### Migrations
 MongoDB manifests are embedded via `go:embed` and applied in filename order; the
-applied names are recorded in the `schema_migrations` collection. `migrate up`
-also fills the denormalized `agent_sessions.title`.
+applied names are recorded in the `sys_migrations` collection, scoped by the `service` field. `migrate up`
+also fills the denormalized `portal_sessions.title`.
 
 ### Runner registry & stale runners
-The bus owns the `runners` collection. A runner registers with a stable `id` (pass `--runner-id`
+The bus owns the `provisioner_runners` collection. A runner registers with a stable `id` (pass `--runner-id`
 or set the `runner.runnerID` config item) so restarts update the same document instead of
 inserting a new one. The bus:
 - touches `last_heartbeat` on every container poll (WebSocket and REST paths),

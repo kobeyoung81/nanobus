@@ -36,7 +36,7 @@ type SessionHeadPrompt struct {
 	UpdatedAt       string `json:"updated_at,omitempty"`
 }
 
-const sessionHeadPromptsCollection = "session_head_prompts"
+const sessionHeadPromptsCollection = "admin_prompts"
 
 // storedSessionHead is the document shape.
 //

@@ -23,7 +23,7 @@ func agentWithSettings(t *testing.T) (*store.Store, func() map[string]string) {
 	t.Helper()
 	s := storetest.Connect(t)
 	now := time.Now().UTC()
-	if _, err := s.DB().Collection("agents").InsertOne(context.Background(), bson.D{
+	if _, err := s.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: "agent-1"},
 		{Key: "user_id", Value: "user-1"},
 		{Key: "type_id", Value: "build"},
@@ -38,7 +38,7 @@ func agentWithSettings(t *testing.T) (*store.Store, func() map[string]string) {
 		var doc struct {
 			Settings map[string]string `bson:"settings"`
 		}
-		if err := s.DB().Collection("agents").
+		if err := s.DB().Collection("portal_agents").
 			FindOne(context.Background(), bson.D{{Key: "_id", Value: "agent-1"}}).Decode(&doc); err != nil {
 			t.Fatalf("read agent: %v", err)
 		}

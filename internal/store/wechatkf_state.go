@@ -15,7 +15,7 @@ import (
 // wechatKFSyncStateCollection needs no migration manifest: the only access path
 // is by open_kfid, which is the document's _id, and MongoDB indexes _id on
 // creation. A manifest would declare nothing.
-const wechatKFSyncStateCollection = "wechatkf_sync_state"
+const wechatKFSyncStateCollection = "bus_wechatkf_sync_state"
 
 // storedWeChatKFState is the document shape.
 //

@@ -59,7 +59,7 @@ func seedModelType(t *testing.T, s *store.Store, id string, seeded bool, models 
 	if len(stored) > 0 {
 		doc = append(doc, bson.E{Key: "models", Value: stored})
 	}
-	if _, err := s.DB().Collection("agent_types").InsertOne(context.Background(), doc); err != nil {
+	if _, err := s.DB().Collection("admin_agent_types").InsertOne(context.Background(), doc); err != nil {
 		t.Fatalf("seed type %s: %v", id, err)
 	}
 }

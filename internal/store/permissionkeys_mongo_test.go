@@ -71,7 +71,7 @@ func TestSeedPermissionKeys_KeepsAdminEdits(t *testing.T) {
 	}
 
 	// The admin loosens bash to the catalog default and rewrites its text.
-	if _, err := s.DB().Collection("permission_keys").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("admin_permission_keys").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "bash"}},
 		bson.D{{Key: "$set", Value: bson.D{
 			{Key: "description", Value: "Run shell commands (ours)"},

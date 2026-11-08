@@ -1,6 +1,6 @@
 {
   "collections": {
-    "inbound_queue": {
+    "bus_inbound_queue": {
       "indexes": [
         {
           "name": "user_pending",
@@ -12,7 +12,7 @@
         }
       ]
     },
-    "outbound_queue": {
+    "bus_outbound_queue": {
       "indexes": [
         {
           "name": "channel_pending",

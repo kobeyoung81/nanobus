@@ -23,11 +23,11 @@ func TestRestCountQueues(t *testing.T) {
 		// Anything not pending is not a backlog.
 		{{Key: "user_id", Value: "u-1"}, {Key: "status", Value: "claimed"}},
 	} {
-		if _, err := srv.store.DB().Collection("inbound_queue").InsertOne(context.Background(), doc); err != nil {
+		if _, err := srv.store.DB().Collection("bus_inbound_queue").InsertOne(context.Background(), doc); err != nil {
 			t.Fatalf("seed inbound: %v", err)
 		}
 	}
-	if _, err := srv.store.DB().Collection("outbound_queue").InsertOne(context.Background(),
+	if _, err := srv.store.DB().Collection("bus_outbound_queue").InsertOne(context.Background(),
 		bson.D{{Key: "user_id", Value: "u-1"}, {Key: "status", Value: "pending"}}); err != nil {
 		t.Fatalf("seed outbound: %v", err)
 	}

@@ -25,7 +25,12 @@ type MigrationInfo struct {
 	AppliedAt time.Time
 }
 
-const migrationsCollection = "schema_migrations"
+const migrationsCollection = "sys_migrations"
+
+// migrationService scopes this service's records inside the shared
+// sys_migrations collection. The bus and nanoartifacts both write here, so the
+// document id carries the owning service and reads filter on it.
+const migrationService = "bus"
 
 // Migrate applies every pending MongoDB migration from the given map of
 // filename → manifest JSON. Filenames order the run, and applied names are
@@ -99,7 +104,7 @@ func (s *Store) MigrationStatus(migrations map[string]string) ([]MigrationInfo, 
 
 // appliedMigrations reads the names already applied, with their timestamps.
 func (s *Store) appliedMigrations(ctx context.Context) (map[string]time.Time, error) {
-	cur, err := s.db.Collection(migrationsCollection).Find(ctx, bson.D{})
+	cur, err := s.db.Collection(migrationsCollection).Find(ctx, bson.D{{Key: "service", Value: migrationService}})
 	if err != nil {
 		// A collection that does not exist yet is not an error: Find simply
 		// returns an empty cursor. Anything that does error here is real.
@@ -110,20 +115,21 @@ func (s *Store) appliedMigrations(ctx context.Context) (map[string]time.Time, er
 	out := make(map[string]time.Time)
 	for cur.Next(ctx) {
 		var doc struct {
-			Name      string    `bson:"_id"`
+			ID        string    `bson:"_id"`
 			AppliedAt time.Time `bson:"applied_at"`
 		}
 		if err := cur.Decode(&doc); err != nil {
 			return nil, fmt.Errorf("decode migration record: %w", err)
 		}
-		out[doc.Name] = doc.AppliedAt
+		out[strings.TrimPrefix(doc.ID, migrationService+":")] = doc.AppliedAt
 	}
 	return out, cur.Err()
 }
 
 func (s *Store) recordMigration(ctx context.Context, name string) error {
 	_, err := s.db.Collection(migrationsCollection).InsertOne(ctx, bson.D{
-		{Key: "_id", Value: name},
+		{Key: "_id", Value: migrationService + ":" + name},
+		{Key: "service", Value: migrationService},
 		{Key: "applied_at", Value: time.Now().UTC()},
 	})
 	return err

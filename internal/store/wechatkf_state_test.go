@@ -148,7 +148,7 @@ func TestWeChatKFState_IsOneDocumentPerAccount(t *testing.T) {
 		}
 	}
 
-	n, err := s.DB().Collection("wechatkf_sync_state").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("bus_wechatkf_sync_state").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count states: %v", err)
 	}

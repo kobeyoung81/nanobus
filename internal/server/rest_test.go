@@ -167,7 +167,7 @@ func TestRestListUsers_Empty(t *testing.T) {
 func seedAgent(t *testing.T, s *Server, id, userID, status string) {
 	t.Helper()
 	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("agents").InsertOne(context.Background(), bson.D{
+	if _, err := s.store.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id},
 		{Key: "user_id", Value: userID},
 		{Key: "type_id", Value: "build"},
@@ -187,7 +187,7 @@ func seedAgent(t *testing.T, s *Server, id, userID, status string) {
 func seedAgentNamed(t *testing.T, s *Server, id, userID, status, displayName string) {
 	t.Helper()
 	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("agents").InsertOne(context.Background(), bson.D{
+	if _, err := s.store.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id},
 		{Key: "user_id", Value: userID},
 		{Key: "type_id", Value: "build"},

@@ -19,9 +19,9 @@ import (
 // last step of the storage move — one owner per collection, one place with
 // credentials, one place that runs migrations.
 const (
-	oauthProvidersCollection = "oauth_providers"
-	gitShortcutsCollection   = "git_browser_shortcuts"
-	refreshTokensCollection  = "refresh_tokens"
+	oauthProvidersCollection = "auth_oauth_providers"
+	gitShortcutsCollection   = "auth_git_shortcuts"
+	refreshTokensCollection  = "auth_refresh_tokens"
 )
 
 // OAuthLink is one directory/identity link: this user signs in as that provider

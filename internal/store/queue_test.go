@@ -475,19 +475,19 @@ func TestMigrations_DeclareQueueIndexes(t *testing.T) {
 	// The claim filters on (user_id, status) and sorts by (created_at, _id), so
 	// all four are in the key — the trailing _id included, or the sort would not
 	// be served by the index.
-	assertIndexKeys(t, s.DB().Collection("inbound_queue"), "user_pending", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("bus_inbound_queue"), "user_pending", [][2]any{
 		{"user_id", int32(1)}, {"status", int32(1)}, {"created_at", int32(1)}, {"_id", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("inbound_queue"), "agent_pending", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("bus_inbound_queue"), "agent_pending", [][2]any{
 		{"agent_id", int32(1)}, {"status", int32(1)}, {"created_at", int32(1)}, {"_id", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("outbound_queue"), "channel_pending", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("bus_outbound_queue"), "channel_pending", [][2]any{
 		{"channel", int32(1)}, {"status", int32(1)}, {"created_at", int32(1)}, {"_id", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("outbound_queue"), "user_pending", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("bus_outbound_queue"), "user_pending", [][2]any{
 		{"user_id", int32(1)}, {"status", int32(1)}, {"created_at", int32(1)}, {"_id", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("outbound_queue"), "agent_pending", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("bus_outbound_queue"), "agent_pending", [][2]any{
 		{"agent_id", int32(1)}, {"status", int32(1)}, {"created_at", int32(1)}, {"_id", int32(1)},
 	})
 }

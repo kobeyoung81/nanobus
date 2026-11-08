@@ -26,7 +26,7 @@ import (
 func readUser(t *testing.T, s *store.Store, userID string) bson.M {
 	t.Helper()
 	var doc bson.M
-	if err := s.DB().Collection("users").
+	if err := s.DB().Collection("auth_users").
 		FindOne(context.Background(), bson.D{{Key: "_id", Value: userID}}).Decode(&doc); err != nil {
 		t.Fatalf("read user %s: %v", userID, err)
 	}
@@ -48,7 +48,7 @@ func seedContainerRequest(t *testing.T, s *store.Store, userID string, bindingID
 	if bindingID != nil {
 		doc = append(doc, bson.E{Key: "binding_id", Value: *bindingID})
 	}
-	if _, err := s.DB().Collection("container_requests").InsertOne(context.Background(), doc); err != nil {
+	if _, err := s.DB().Collection("provisioner_container_requests").InsertOne(context.Background(), doc); err != nil {
 		t.Fatalf("seed container request for %s: %v", userID, err)
 	}
 }
@@ -295,7 +295,7 @@ func TestResolveUserBinding_ConcurrentOnboarding(t *testing.T) {
 	}
 
 	// Exactly one user, one binding, one container request.
-	n, err := s.DB().Collection("users").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("auth_users").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count users: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestUsers_IdentityIsUnique(t *testing.T) {
 	ctx := context.Background()
 
 	insert := func(userID string) error {
-		_, err := s.DB().Collection("users").InsertOne(ctx, bson.D{
+		_, err := s.DB().Collection("auth_users").InsertOne(ctx, bson.D{
 			{Key: "_id", Value: userID},
 			{Key: "status", Value: "active"},
 			{Key: "tier", Value: "free"},
@@ -686,7 +686,7 @@ func TestPollPendingContainers_ClaimsAndNames(t *testing.T) {
 	storetest.SeedUser(t, s, "u-1", "pro", 7)
 	// SeedUser leaves no display name, so set one: the runner names the container
 	// Linux user after it.
-	if _, err := s.DB().Collection("users").UpdateOne(context.Background(),
+	if _, err := s.DB().Collection("auth_users").UpdateOne(context.Background(),
 		bson.D{{Key: "_id", Value: "u-1"}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "display_name", Value: "Ada"}}}},
 	); err != nil {
@@ -792,26 +792,26 @@ func TestMigrations_DeclareUserIndexes(t *testing.T) {
 
 	// The identity index is the SQL primary key of user_channels, and it is what
 	// makes a racing onboarding fail atomically.
-	assertIndexKeys(t, s.DB().Collection("users"), "channel_identity_unique", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("auth_users"), "channel_identity_unique", [][2]any{
 		{"channels.channel", int32(1)}, {"channels.sender_id", int32(1)},
 	})
 	// The binding id was UNIQUE on its own table; container requests quote it.
-	assertIndexKeys(t, s.DB().Collection("users"), "binding_id_unique", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("auth_users"), "binding_id_unique", [][2]any{
 		{"channels.binding_id", int32(1)},
 	})
 	// Uniqueness itself, not just the key order: these two *are* the constraints.
-	assertIndexUnique(t, s.DB().Collection("users"), "channel_identity_unique")
-	assertIndexUnique(t, s.DB().Collection("users"), "binding_id_unique")
+	assertIndexUnique(t, s.DB().Collection("auth_users"), "channel_identity_unique")
+	assertIndexUnique(t, s.DB().Collection("auth_users"), "binding_id_unique")
 	// A unique index that skips documents without a binding is the MongoDB form
 	// of MySQL's UNIQUE-permitting-many-NULLs (migration 055).
-	assertIndexKeys(t, s.DB().Collection("container_requests"), "binding_unique", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("provisioner_container_requests"), "binding_unique", [][2]any{
 		{"binding_id", int32(1)},
 	})
-	assertIndexUnique(t, s.DB().Collection("container_requests"), "binding_unique")
-	assertIndexKeys(t, s.DB().Collection("container_requests"), "status_created", [][2]any{
+	assertIndexUnique(t, s.DB().Collection("provisioner_container_requests"), "binding_unique")
+	assertIndexKeys(t, s.DB().Collection("provisioner_container_requests"), "status_created", [][2]any{
 		{"status", int32(1)}, {"created_at", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("container_requests"), "user_binding", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("provisioner_container_requests"), "user_binding", [][2]any{
 		{"user_id", int32(1)}, {"binding_id", int32(1)},
 	})
 }
@@ -935,7 +935,7 @@ func TestListUserSummaries(t *testing.T) {
 	base := time.Now().UTC()
 	// Two users with distinct update times so the order is decided, and one
 	// deleted to be filtered out by default.
-	if _, err := s.DB().Collection("users").InsertMany(context.Background(), []any{
+	if _, err := s.DB().Collection("auth_users").InsertMany(context.Background(), []any{
 		bson.D{{Key: "_id", Value: "u-1"}, {Key: "status", Value: "active"}, {Key: "tier", Value: "pro"},
 			{Key: "created_at", Value: base}, {Key: "updated_at", Value: base.Add(-time.Hour)}},
 		bson.D{{Key: "_id", Value: "u-2"}, {Key: "status", Value: "deleted"}, {Key: "tier", Value: "free"},
@@ -980,7 +980,7 @@ func TestUsers_EmailIsUniqueWhenPresent(t *testing.T) {
 		if email != "" {
 			doc = append(doc, bson.E{Key: "email", Value: email})
 		}
-		_, err := s.DB().Collection("users").InsertOne(ctx, doc)
+		_, err := s.DB().Collection("auth_users").InsertOne(ctx, doc)
 		return err
 	}
 
@@ -1002,6 +1002,6 @@ func TestUsers_EmailIsUniqueWhenPresent(t *testing.T) {
 func TestMigrations_DeclareUserEmailIndex(t *testing.T) {
 	s := storetest.Connect(t)
 
-	assertIndexKeys(t, s.DB().Collection("users"), "email_unique", [][2]any{{"email", int32(1)}})
-	assertIndexUnique(t, s.DB().Collection("users"), "email_unique")
+	assertIndexKeys(t, s.DB().Collection("auth_users"), "email_unique", [][2]any{{"email", int32(1)}})
+	assertIndexUnique(t, s.DB().Collection("auth_users"), "email_unique")
 }

@@ -159,7 +159,7 @@ func SeedUser(t *testing.T, s *store.Store, userID, tier string, bindingID int64
 func SeedUserChannel(t *testing.T, s *store.Store, userID, tier, channel, senderID string, bindingID int64) {
 	t.Helper()
 	now := time.Now().UTC()
-	if _, err := s.DB().Collection("users").InsertOne(context.Background(), bson.D{
+	if _, err := s.DB().Collection("auth_users").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: userID},
 		{Key: "status", Value: "active"},
 		{Key: "tier", Value: tier},
@@ -184,7 +184,7 @@ func SeedAgents(t *testing.T, s *store.Store, userID string, ids ...string) {
 	t.Helper()
 	now := time.Now().UTC()
 	for _, id := range ids {
-		if _, err := s.DB().Collection("agents").InsertOne(context.Background(), bson.D{
+		if _, err := s.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
 			{Key: "_id", Value: id},
 			{Key: "user_id", Value: userID},
 			{Key: "type_id", Value: "build"},

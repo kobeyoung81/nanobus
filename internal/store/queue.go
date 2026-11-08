@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	inboundQueueCollection  = "inbound_queue"
-	outboundQueueCollection = "outbound_queue"
+	inboundQueueCollection  = "bus_inbound_queue"
+	outboundQueueCollection = "bus_outbound_queue"
 )
 
 // storedMediaItem is one attachment as stored.

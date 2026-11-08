@@ -31,7 +31,7 @@ type storedRunnerDoc struct {
 func readRunner(t *testing.T, s *store.Store, id string) storedRunnerDoc {
 	t.Helper()
 	var doc storedRunnerDoc
-	if err := s.DB().Collection("runners").
+	if err := s.DB().Collection("provisioner_runners").
 		FindOne(context.Background(), bson.D{{Key: "_id", Value: id}}).Decode(&doc); err != nil {
 		t.Fatalf("read runner %s: %v", id, err)
 	}
@@ -42,7 +42,7 @@ func readRunner(t *testing.T, s *store.Store, id string) storedRunnerDoc {
 // a heartbeat in the past: the API always stamps "now".
 func seedRunner(t *testing.T, s *store.Store, id, status string, heartbeat time.Time) {
 	t.Helper()
-	if _, err := s.DB().Collection("runners").InsertOne(context.Background(), bson.D{
+	if _, err := s.DB().Collection("provisioner_runners").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: id},
 		{Key: "hostname", Value: id + ".host"},
 		{Key: "docker_host", Value: "local"},
@@ -166,7 +166,7 @@ func TestMarkStaleRunnersOffline(t *testing.T) {
 		t.Fatalf("an offline runner changed on its own: %+v", doc)
 	}
 	// It sweeps, it never deletes.
-	if n, err := s.DB().Collection("runners").CountDocuments(context.Background(), bson.D{}); err != nil || n != 3 {
+	if n, err := s.DB().Collection("provisioner_runners").CountDocuments(context.Background(), bson.D{}); err != nil || n != 3 {
 		t.Fatalf("expected all 3 runners to survive the sweep, got %d (err %v)", n, err)
 	}
 }
@@ -179,7 +179,7 @@ func TestDeleteRunner(t *testing.T) {
 		t.Fatalf("DeleteRunner: %v", err)
 	}
 
-	n, err := s.DB().Collection("runners").CountDocuments(context.Background(), bson.D{})
+	n, err := s.DB().Collection("provisioner_runners").CountDocuments(context.Background(), bson.D{})
 	if err != nil {
 		t.Fatalf("count runners: %v", err)
 	}
@@ -199,10 +199,10 @@ func TestDeleteRunner(t *testing.T) {
 func TestMigrations_DeclareRunnerIndexes(t *testing.T) {
 	s := storetest.Connect(t)
 
-	assertIndexKeys(t, s.DB().Collection("runners"), "status_last_heartbeat", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("provisioner_runners"), "status_last_heartbeat", [][2]any{
 		{"status", int32(1)}, {"last_heartbeat", int32(1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("runners"), "registered_at_desc", [][2]any{
+	assertIndexKeys(t, s.DB().Collection("provisioner_runners"), "registered_at_desc", [][2]any{
 		{"registered_at", int32(-1)},
 	})
 }

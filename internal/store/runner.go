@@ -12,7 +12,7 @@ import (
 // it is marked offline by the bus sweeper.
 const RunnerStaleTimeout = 2 * time.Minute
 
-const runnersCollection = "runners"
+const runnersCollection = "provisioner_runners"
 
 // storedRunner is the document shape. The writes below still build their $set by
 // hand (they only ever touch a few fields); this is what the reads decode into.

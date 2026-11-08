@@ -1,6 +1,6 @@
 {
   "collections": {
-    "mcp_servers": {
+    "admin_mcp_servers": {
       "indexes": [
         {
           "name": "scope_owner_name",
@@ -8,7 +8,7 @@
         }
       ]
     },
-    "skills": {
+    "admin_skills": {
       "indexes": [
         {
           "name": "name_unique",
@@ -21,7 +21,7 @@
         }
       ]
     },
-    "user_secrets": {
+    "auth_secrets": {
       "indexes": [
         {
           "name": "identity_unique",
@@ -30,7 +30,7 @@
         }
       ]
     },
-    "user_skill_acks": {
+    "admin_user_skill_acks": {
       "indexes": [
         {
           "name": "user_skill_unique",

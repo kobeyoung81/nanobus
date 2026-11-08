@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	userSecretsCollection   = "user_secrets"
-	userSkillAcksCollection = "user_skill_acks"
+	userSecretsCollection   = "auth_secrets"
+	userSkillAcksCollection = "admin_user_skill_acks"
 )
 
 // storedUserSecret is one secret value of one (user, capability).
