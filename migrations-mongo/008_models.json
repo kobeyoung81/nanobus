@@ -1,0 +1,38 @@
+{
+  "collections": {
+    "model_providers": {
+      "indexes": [
+        {
+          "name": "scope_owner_name_unique",
+          "keys": [["scope", 1], ["owner_user_id", 1], ["name", 1]],
+          "unique": true
+        },
+        {
+          "name": "scope_name",
+          "keys": [["scope", 1], ["name", 1]]
+        },
+        {
+          "name": "scope_owner_name",
+          "keys": [["scope", 1], ["owner_user_id", 1], ["name", 1]]
+        }
+      ]
+    },
+    "models": {
+      "indexes": [
+        {
+          "name": "provider_name_unique",
+          "keys": [["provider_id", 1], ["name", 1]],
+          "unique": true
+        },
+        {
+          "name": "scope_name",
+          "keys": [["scope", 1], ["name", 1]]
+        },
+        {
+          "name": "scope_owner_name",
+          "keys": [["scope", 1], ["owner_user_id", 1], ["name", 1]]
+        }
+      ]
+    }
+  }
+}

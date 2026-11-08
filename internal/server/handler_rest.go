@@ -1,0 +1,471 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+
+	"gitee.com/kobeyoung81/nanobus/internal/store"
+	"gitee.com/kobeyoung81/nanoprotocol"
+)
+
+func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
+	// Inbound (gateway → bus)
+	mux.HandleFunc("POST /api/v1/inbound", s.restPostInbound)
+	mux.HandleFunc("POST /api/v1/inbound/poll", s.restPollInbound)
+
+	// Generic RPC envelope (nanoprotocol.Client transport)
+	mux.HandleFunc("POST /api/v1/rpc", s.restRPC)
+
+	// Outbound (agent → bus)
+	mux.HandleFunc("POST /api/v1/outbound", s.restPostOutbound)
+	mux.HandleFunc("POST /api/v1/outbound/chunk", s.restOutboundChunk)
+	mux.HandleFunc("POST /api/v1/outbound/complete", s.restOutboundComplete)
+
+	// SSE streaming (gateway ← bus)
+	mux.HandleFunc("GET /api/v1/outbound/stream", s.restOutboundStream)
+	mux.HandleFunc("GET /api/v1/events/stream", s.restEventsStream)
+
+	// WebSocket tunnels (hypervisor / container shell access)
+	mux.HandleFunc("GET /ws/tunnel/{name}", s.handleTunnelWS)
+	mux.HandleFunc("GET /ws/hypervisor", s.handleHypervisorTunnelWS)
+	mux.HandleFunc("POST /api/v1/tunnels", s.restRegisterTunnel)
+	mux.HandleFunc("DELETE /api/v1/tunnels/{name}", s.restUnregisterTunnel)
+
+	// Agent files browser + exchange (proxied to the owning user's hypervisor tunnel)
+	mux.HandleFunc("GET /api/v1/files/{agentID}", s.restFileList)
+	mux.HandleFunc("GET /api/v1/files/{agentID}/content", s.restFileContentGET)
+	mux.HandleFunc("PUT /api/v1/files/{agentID}/content", s.restFileContentPUT)
+	mux.HandleFunc("DELETE /api/v1/files/{agentID}/content", s.restFileContentDELETE)
+	mux.HandleFunc("POST /api/v1/files/{agentID}/mkdir", s.restFileMkdir)
+	mux.HandleFunc("POST /api/v1/files/{agentID}/rename", s.restFileRename)
+	mux.HandleFunc("POST /api/v1/files/{agentID}/copy", s.restFileCopy)
+	mux.HandleFunc("GET /api/v1/agents/{agentID}/terminals", s.restTerminalList)
+	mux.HandleFunc("POST /api/v1/agents/{agentID}/terminals/attach", s.restTerminalAttach)
+	mux.HandleFunc("DELETE /api/v1/agents/{agentID}/terminals/{terminalID}", s.restTerminalKill)
+	mux.HandleFunc("GET /ws/terminal", s.handleTerminalBridgeWS)
+
+	// Git browser (proxied to the owning user's hypervisor tunnel).
+	mux.HandleFunc("GET /api/v1/git/{agentID}/{op...}", s.restGit)
+	mux.HandleFunc("POST /api/v1/git/{agentID}/{op...}", s.restGit)
+	mux.HandleFunc("PUT /api/v1/git/{agentID}/{op...}", s.restGit)
+	mux.HandleFunc("DELETE /api/v1/git/{agentID}/{op...}", s.restGit)
+
+	// Users
+	mux.HandleFunc("POST /api/v1/users/resolve", s.restResolveUser)
+	mux.HandleFunc("POST /api/v1/users", s.restCreateUser)
+	mux.HandleFunc("GET /api/v1/users", s.restListUsers)
+	// Account administration, for the portal: it used to read `users` straight
+	// out of MySQL, which is what made one account two services' business.
+	mux.HandleFunc("GET /api/v1/user-accounts", s.restListUserAccounts)
+	mux.HandleFunc("GET /api/v1/user-accounts/counts", s.restCountUserAccounts)
+	mux.HandleFunc("GET /api/v1/user-accounts/{userID}", s.restGetUserAccount)
+	mux.HandleFunc("PATCH /api/v1/user-accounts/{userID}", s.restSetUserAccount)
+	mux.HandleFunc("GET /api/v1/user-accounts/{userID}/password-hash", s.restGetUserPasswordHash)
+	mux.HandleFunc("PUT /api/v1/user-accounts/{userID}/password", s.restSetUserPassword)
+	mux.HandleFunc("GET /api/v1/users/{id}", s.restGetUser)
+
+	// The three surfaces that used to be the console's and the auth service's own
+	// tables: directory links, git-browser shortcuts and refresh tokens. See
+	// internal/store/identity.go for why they moved in here.
+	mux.HandleFunc("GET /api/v1/users/{userID}/oauth-links", s.restListOAuthLinks)
+	mux.HandleFunc("POST /api/v1/users/{userID}/oauth-links", s.restLinkOAuth)
+	mux.HandleFunc("DELETE /api/v1/users/{userID}/oauth-links/{provider}", s.restUnlinkOAuth)
+	mux.HandleFunc("GET /api/v1/oauth-links", s.restListOAuthLinksByProvider)
+	mux.HandleFunc("GET /api/v1/users/{userID}/git-shortcuts", s.restListGitShortcuts)
+	mux.HandleFunc("POST /api/v1/users/{userID}/git-shortcuts", s.restAddGitShortcut)
+	mux.HandleFunc("DELETE /api/v1/users/{userID}/git-shortcuts/{id}", s.restDeleteGitShortcut)
+	mux.HandleFunc("POST /api/v1/auth/refresh-tokens", s.restSaveRefreshToken)
+	mux.HandleFunc("DELETE /api/v1/auth/refresh-tokens", s.restRevokeUserRefreshTokens)
+	mux.HandleFunc("POST /api/v1/auth/refresh-tokens/purge", s.restPurgeRefreshTokens)
+	mux.HandleFunc("GET /api/v1/auth/refresh-tokens/{hash}", s.restGetRefreshToken)
+	mux.HandleFunc("DELETE /api/v1/auth/refresh-tokens/{hash}", s.restDeleteRefreshToken)
+
+	// Agents
+	mux.HandleFunc("POST /api/v1/agents", s.restCreateAgent)
+	mux.HandleFunc("GET /api/v1/agents", s.restListAgents)
+	// The literal path is more specific than /api/v1/agents/{id} below, so Go's
+	// mux routes this exact path here rather than to the agent lookup.
+	mux.HandleFunc("GET /api/v1/agents/attention", s.restAgentsAttention)
+
+	// Agent groups: a user's private, single-level organization of agents.
+	// The literal /reorder is more specific than /{id}, so Go's mux keeps them
+	// apart.
+	mux.HandleFunc("GET /api/v1/agent-groups", s.restListAgentGroups)
+	mux.HandleFunc("POST /api/v1/agent-groups", s.restCreateAgentGroup)
+	mux.HandleFunc("POST /api/v1/agent-groups/reorder", s.restReorderAgentGroups)
+	mux.HandleFunc("POST /api/v1/agent-groups/arrange", s.restArrangeAgentGroups)
+	mux.HandleFunc("PUT /api/v1/agent-groups/{id}", s.restRenameAgentGroup)
+	mux.HandleFunc("DELETE /api/v1/agent-groups/{id}", s.restDeleteAgentGroup)
+
+	mux.HandleFunc("GET /api/v1/agents/{id}", s.restGetAgent)
+	mux.HandleFunc("PUT /api/v1/agents/{id}", s.restUpdateAgent)
+	mux.HandleFunc("PUT /api/v1/agents/{id}/status", s.restUpdateAgentStatus)
+	mux.HandleFunc("POST /api/v1/agents/{id}/provision", s.restProvisionAgent)
+	mux.HandleFunc("POST /api/v1/agents/{id}/restart", s.restRestartAgent)
+	mux.HandleFunc("POST /api/v1/agents/{id}/restore", s.restRestoreAgent)
+	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.restDeleteAgent)
+
+	// Sessions
+	mux.HandleFunc("GET /api/v1/sessions", s.restListSessions)
+	mux.HandleFunc("GET /api/v1/sessions/{sessionID}", s.restGetSession)
+	mux.HandleFunc("DELETE /api/v1/sessions/{sessionID}", s.restArchiveSession)
+	// The conversation log's cross-agent reads: the portal's own shape, served
+	// from here so it stops reading agent_sessions directly.
+	mux.HandleFunc("GET /api/v1/conversations", s.restListConversations)
+	mux.HandleFunc("GET /api/v1/conversations/{sessionID}", s.restGetConversation)
+
+	// Config
+	mux.HandleFunc("GET /api/v1/config", s.restListConfig)
+	mux.HandleFunc("GET /api/v1/config/{component}", s.restGetConfig)
+	mux.HandleFunc("PUT /api/v1/config/{component}/{key}", s.restSetConfig)
+
+	// Containers + runners
+	mux.HandleFunc("POST /api/v1/containers", s.restRequestContainer)
+	mux.HandleFunc("GET /api/v1/containers", s.restListContainers)
+	mux.HandleFunc("POST /api/v1/containers/poll", s.restPollPendingContainers)
+	mux.HandleFunc("PUT /api/v1/containers/{id}/status", s.restUpdateContainerStatus)
+	mux.HandleFunc("POST /api/v1/containers/{id}/dispose", s.restDisposeContainer)
+	mux.HandleFunc("POST /api/v1/containers/{id}/restart", s.restRestartContainer)
+	mux.HandleFunc("POST /api/v1/containers/{id}/reprovision", s.restReprovisionContainer)
+	mux.HandleFunc("POST /api/v1/runners/register", s.restRegisterRunner)
+	// The fleet view and the runtime snapshot, for the portal.
+	mux.HandleFunc("GET /api/v1/runners", s.restListRunners)
+	mux.HandleFunc("GET /api/v1/runners/counts", s.restCountRunners)
+	// The console's own view of the same collection: it may omit the user (the
+	// runtime snapshot shows every container) and it shows the runner a container
+	// landed on, which the agent-facing shape has no reason to carry.
+	mux.HandleFunc("GET /api/v1/container-requests", s.restListContainerRequests)
+	mux.HandleFunc("GET /api/v1/container-requests/counts", s.restCountContainerRequests)
+	mux.HandleFunc("GET /api/v1/agent-fleet", s.restListAgentFleet)
+	mux.HandleFunc("GET /api/v1/user-activity", s.restUserActivity)
+	// The overview's remaining numbers: queue depths, the WeChat KF account count,
+	// and the two configuration figures.
+	mux.HandleFunc("GET /api/v1/queues/counts", s.restCountQueues)
+	mux.HandleFunc("GET /api/v1/wechat-kf/counts", s.restCountWeChatKF)
+	mux.HandleFunc("GET /api/v1/config-updated-at/{component}", s.restConfigUpdatedAt)
+	mux.HandleFunc("GET /api/v1/config-counts/{component}", s.restCountConfigItems)
+	mux.HandleFunc("DELETE /api/v1/runners/{id}", s.restDeleteRunner)
+
+	// Auth reverse proxy → nanoauth
+	s.registerAuthProxy(mux)
+
+	// Enterprise admin: audit trail + alert rules
+	mux.HandleFunc("GET /api/v1/audit", s.restListAudit)
+	mux.HandleFunc("POST /api/v1/audit", s.restRecordAudit)
+	mux.HandleFunc("GET /api/v1/alert-rules", s.restListAlertRules)
+	mux.HandleFunc("POST /api/v1/alert-rules", s.restUpsertAlertRule)
+	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", s.restDeleteAlertRule)
+
+	// Capability catalog: admin management
+	mux.HandleFunc("GET /api/v1/capabilities/builtin", s.restListBuiltin)
+	mux.HandleFunc("PUT /api/v1/capabilities/builtin/{id}", s.restUpdateBuiltin)
+	// Agent types (platform policy plane) + permission keys
+	mux.HandleFunc("GET /api/v1/agent-types", s.restListAgentTypes)
+	mux.HandleFunc("POST /api/v1/agent-types", s.restSaveAgentType)
+	mux.HandleFunc("GET /api/v1/agent-types/{id}", s.restGetAgentType)
+	mux.HandleFunc("PUT /api/v1/agent-types/{id}", s.restSaveAgentType)
+	mux.HandleFunc("PUT /api/v1/agent-types/{id}/capabilities", s.restSetTypeCapability)
+	mux.HandleFunc("DELETE /api/v1/agent-types/{id}/capabilities", s.restDeleteTypeCapability)
+	mux.HandleFunc("DELETE /api/v1/agent-types/{id}", s.restDeleteAgentType)
+	// Prompt baseline: where each type's stored prompt stands relative to the
+	// bundle this binary ships, and the single-type restore behind that.
+	mux.HandleFunc("GET /api/v1/agent-types/prompt-status", s.restAgentTypePromptStatus)
+	mux.HandleFunc("POST /api/v1/agent-types/{id}/prompt/reset", s.restResetAgentTypePrompt)
+	mux.HandleFunc("GET /api/v1/permission-keys", s.restListPermissionKeys)
+	mux.HandleFunc("GET /api/v1/capabilities/mcp", s.restListMcpAdmin)
+	mux.HandleFunc("POST /api/v1/capabilities/mcp", s.restCreateMcpAdmin)
+	mux.HandleFunc("POST /api/v1/capabilities/mcp/test", s.restTestMcpAdmin)
+	mux.HandleFunc("PUT /api/v1/capabilities/mcp/{id}", s.restUpdateMcpAdmin)
+	mux.HandleFunc("PUT /api/v1/capabilities/mcp/{id}/state", s.restUpdateMcpState)
+	mux.HandleFunc("DELETE /api/v1/capabilities/mcp/{id}", s.restDeleteMcpAdmin)
+	mux.HandleFunc("GET /api/v1/capabilities/skills", s.restListSkillsAdmin)
+	mux.HandleFunc("POST /api/v1/capabilities/skills", s.restCreateSkillAdmin)
+	mux.HandleFunc("PUT /api/v1/capabilities/skills/{id}", s.restUpdateSkillAdmin)
+	mux.HandleFunc("PUT /api/v1/capabilities/skills/{id}/state", s.restUpdateSkillState)
+	mux.HandleFunc("DELETE /api/v1/capabilities/skills/{id}", s.restDeleteSkillAdmin)
+
+	// Capability catalog: user-scoped library + per-agent settings
+	mux.HandleFunc("GET /api/v1/user/capabilities/library/mcp", s.restListMyMcp)
+	mux.HandleFunc("POST /api/v1/user/capabilities/library/mcp", s.restCreateMyMcp)
+	mux.HandleFunc("POST /api/v1/user/capabilities/library/mcp/test", s.restTestMcpMy)
+	mux.HandleFunc("PUT /api/v1/user/capabilities/library/mcp/{id}", s.restUpdateMyMcp)
+	mux.HandleFunc("DELETE /api/v1/user/capabilities/library/mcp/{id}", s.restDeleteMyMcp)
+	mux.HandleFunc("GET /api/v1/user/capabilities/library/skills", s.restListMySkills)
+	mux.HandleFunc("POST /api/v1/user/capabilities/library/skills", s.restCreateMySkill)
+	mux.HandleFunc("PUT /api/v1/user/capabilities/library/skills/{id}", s.restUpdateMySkill)
+	mux.HandleFunc("DELETE /api/v1/user/capabilities/library/skills/{id}", s.restDeleteMySkill)
+	mux.HandleFunc("GET /api/v1/user/capabilities/agents/{agentID}", s.restAgentCapabilities)
+	mux.HandleFunc("PUT /api/v1/user/capabilities/agents/{agentID}", s.restSetAgentCapability)
+	mux.HandleFunc("DELETE /api/v1/user/capabilities/agents/{agentID}", s.restDeleteAgentCapability)
+	mux.HandleFunc("PUT /api/v1/user/capabilities/agents/{agentID}/permissions", s.restSetAgentPermissions)
+	// Per-(agent, mode) override config (model/thinking/settings).
+	mux.HandleFunc("GET /api/v1/user/agents/{agentID}/modes/{typeID}", s.restGetAgentMode)
+	mux.HandleFunc("PUT /api/v1/user/agents/{agentID}/modes/{typeID}", s.restSetAgentMode)
+
+	// Assignable conversational agent types for new agents.
+	mux.HandleFunc("GET /api/v1/user/agent-types", s.restListMyAgentTypes)
+	// Prompt blocks of the session agents (read-only on the user plane).
+	mux.HandleFunc("GET /api/v1/user/agents/{agentID}/prompt-blocks", s.restGetAgentPromptBlocks)
+	// The account's language: the user-level half of the two-level setting.
+	mux.HandleFunc("GET /api/v1/user/preferences", s.restGetPreferences)
+	mux.HandleFunc("PUT /api/v1/user/preferences", s.restSetPreferences)
+	// Skill update acknowledgement + user-supplied secrets.
+	mux.HandleFunc("POST /api/v1/user/skill-acks", s.restUserSkillAck)
+	mux.HandleFunc("GET /api/v1/user/secrets/{kind}/{ref}", s.restListUserSecrets)
+	mux.HandleFunc("PUT /api/v1/user/secrets/{kind}/{ref}", s.restSetUserSecret)
+	mux.HandleFunc("DELETE /api/v1/user/secrets/{kind}/{ref}", s.restDeleteUserSecret)
+
+	// Prompt blocks of the session agents (admin).
+	mux.HandleFunc("GET /api/v1/prompt-blocks", s.restGetPromptBlocks)
+	mux.HandleFunc("PUT /api/v1/prompt-blocks", s.restSavePromptBlock)
+
+	// Model catalog: admin (global) management
+	mux.HandleFunc("GET /api/v1/models", s.restListModelsAdmin)
+	mux.HandleFunc("POST /api/v1/models/providers", s.restCreateProviderAdmin)
+	mux.HandleFunc("POST /api/v1/models/providers/test", s.restTestProviderAdmin)
+	mux.HandleFunc("PUT /api/v1/models/providers/{id}", s.restUpdateProviderAdmin)
+	mux.HandleFunc("DELETE /api/v1/models/providers/{id}", s.restDeleteProviderAdmin)
+	mux.HandleFunc("POST /api/v1/models/models", s.restCreateModelAdmin)
+	mux.HandleFunc("POST /api/v1/models/test", s.restTestModelAdmin)
+	mux.HandleFunc("PUT /api/v1/models/models/{id}", s.restUpdateModelAdmin)
+	mux.HandleFunc("DELETE /api/v1/models/models/{id}", s.restDeleteModelAdmin)
+	// Give one platform model to every seeded agent type (console action).
+	mux.HandleFunc("POST /api/v1/models/models/{id}/apply-to-agent-types", s.restApplyModelToBuiltInTypes)
+
+	// Model catalog: user library (own scope)
+	mux.HandleFunc("GET /api/v1/user/models", s.restListMyModels)
+	mux.HandleFunc("POST /api/v1/user/models/providers", s.restCreateMyProvider)
+	mux.HandleFunc("POST /api/v1/user/models/providers/test", s.restTestProviderMy)
+	mux.HandleFunc("PUT /api/v1/user/models/providers/{id}", s.restUpdateMyProvider)
+	mux.HandleFunc("DELETE /api/v1/user/models/providers/{id}", s.restDeleteMyProvider)
+	mux.HandleFunc("POST /api/v1/user/models/models", s.restCreateMyModel)
+	mux.HandleFunc("POST /api/v1/user/models/test", s.restTestModelMy)
+	mux.HandleFunc("PUT /api/v1/user/models/models/{id}", s.restUpdateMyModel)
+	mux.HandleFunc("DELETE /api/v1/user/models/models/{id}", s.restDeleteMyModel)
+
+	// Voice input: platform-configured dictation for the browser composer. The
+	// audio itself travels over the WebSocket below; these are the settings, the
+	// one-time session mint and the post-recording polish pass.
+	mux.HandleFunc("GET /api/v1/user/voice/config", s.restVoiceConfig)
+	mux.HandleFunc("POST /api/v1/user/voice/session", s.restVoiceSession)
+	mux.HandleFunc("POST /api/v1/user/voice/polish", s.restVoicePolish)
+	mux.HandleFunc("POST /api/v1/user/voice/refine", s.restVoiceRefine)
+	mux.HandleFunc("POST /api/v1/user/voice/transcribe", s.restVoiceTranscribe)
+	mux.HandleFunc("GET "+voiceWSPath, s.handleVoiceWS)
+}
+
+func (s *Server) restPostInbound(w http.ResponseWriter, r *http.Request) {
+	// Bound the request body to the content cap plus framing slack so an
+	// oversized message is rejected before it is buffered in memory.
+	r.Body = http.MaxBytesReader(w, r.Body, int64(s.maxContentBytes)+maxBodySlack)
+	var msg nanoprotocol.InboundMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		if writeBodyTooLarge(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if err := s.checkContent(msg.Content); err != nil {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := s.store.PostInbound(msg); err != nil {
+		slog.Error("post inbound", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func (s *Server) restResolveUser(w http.ResponseWriter, r *http.Request) {
+	var req nanoprotocol.ResolveUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	userID, isNew, err := s.store.ResolveUser(req.Channel, req.SenderID)
+	if err != nil {
+		slog.Error("resolve user", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id": userID,
+		"is_new":  isNew,
+	})
+}
+
+func (s *Server) restCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+		// The sign-in service's registration carries the address and a hash it
+		// produced itself: the bus stores credentials, it never sees a password.
+		Email              string `json:"email"`
+		PasswordHash       string `json:"password_hash"`
+		MustChangePassword bool   `json:"must_change_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if err := s.store.RegisterUser(req.ID, req.DisplayName); err != nil {
+		slog.Error("register user", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if req.Email != "" {
+		if err := s.store.SetUserEmail(req.ID, req.Email); err != nil {
+			if errors.Is(err, store.ErrEmailTaken) {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "email already in use"})
+				return
+			}
+			slog.Error("set user email", "user_id", req.ID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+	}
+	if req.PasswordHash != "" {
+		if err := s.store.SetUserPassword(req.ID, req.PasswordHash, req.MustChangePassword); err != nil {
+			slog.Error("set user password", "user_id", req.ID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+	}
+
+	// The first account of a fresh installation becomes its administrator (see
+	// bootstrap_admin.go). This runs after the credentials exist so the account
+	// is usable the moment the sign-up returns.
+	s.maybeBootstrapAdmin(r, req.ID)
+
+	writeJSON(w, http.StatusCreated, map[string]string{"id": req.ID, "status": "created"})
+}
+
+func (s *Server) restListUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.store.ListUsers()
+	if err != nil {
+		slog.Error("list users", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	type userInfo struct {
+		ID string `json:"id"`
+	}
+
+	result := make([]userInfo, 0, len(users))
+	for _, u := range users {
+		result = append(result, userInfo{ID: u})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"users": result,
+		"count": len(result),
+	})
+}
+
+func (s *Server) restRequestContainer(w http.ResponseWriter, r *http.Request) {
+	var req nanoprotocol.RequestContainerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.UserID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
+		return
+	}
+
+	if err := s.store.CreateContainerRequest(req.UserID, req.BindingID, req.AgentID, req.Level); err != nil {
+		slog.Error("request container", "error", err)
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
+}
+
+func (s *Server) restListContainers(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
+		return
+	}
+
+	requests, err := s.store.ListContainers(userID, 0)
+	if err != nil {
+		slog.Error("list containers", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	requests = nonNilSlice(requests)
+	writeJSON(w, http.StatusOK, map[string]any{"requests": requests})
+}
+
+func (s *Server) restDisposeContainer(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "container id is required"})
+		return
+	}
+
+	if err := s.store.DisposeContainerRequest(id, 0); err != nil {
+		slog.Error("dispose container", "id", id, "error", err)
+		if err == store.ErrContainerNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "disposing"})
+}
+
+func (s *Server) restRegisterTunnel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name        string `json:"name"`
+		UpstreamURL string `json:"upstream_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Name == "" || req.UpstreamURL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and upstream_url are required"})
+		return
+	}
+
+	s.tunnels.Register(req.Name, req.UpstreamURL)
+	slog.Info("tunnel registered", "name", req.Name, "upstream", req.UpstreamURL)
+	writeJSON(w, http.StatusOK, map[string]string{"name": req.Name, "status": "registered"})
+}
+
+func (s *Server) restUnregisterTunnel(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	s.tunnels.Unregister(name)
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "unregistered"})
+}
+
+// nonNilSlice keeps a list field on the wire an array. A nil slice means "no
+// elements" in Go and serialises to null, which every console client then has
+// to guard against — the capability page read `.length` on it and crashed on a
+// fresh installation whose catalog was still empty.
+func nonNilSlice[T any](xs []T) []T {
+	if xs == nil {
+		return []T{}
+	}
+	return xs
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}

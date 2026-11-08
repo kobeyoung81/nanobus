@@ -1,0 +1,94 @@
+{
+  "collections": {
+    "users": {
+      "indexes": [
+        {
+          "name": "channel_identity_unique",
+          "keys": [
+            [
+              "channels.channel",
+              1
+            ],
+            [
+              "channels.sender_id",
+              1
+            ]
+          ],
+          "unique": true,
+          "partialFilterExpression": {
+            "channels.channel": {
+              "$exists": true
+            }
+          }
+        },
+        {
+          "name": "binding_id_unique",
+          "keys": [
+            [
+              "channels.binding_id",
+              1
+            ]
+          ],
+          "unique": true,
+          "partialFilterExpression": {
+            "channels.binding_id": {
+              "$exists": true
+            }
+          }
+        },
+        {
+          "name": "email_unique",
+          "keys": [
+            [
+              "email",
+              1
+            ]
+          ],
+          "unique": true,
+          "sparse": true
+        }
+      ]
+    },
+    "container_requests": {
+      "indexes": [
+        {
+          "name": "binding_unique",
+          "keys": [
+            [
+              "binding_id",
+              1
+            ]
+          ],
+          "unique": true,
+          "sparse": true
+        },
+        {
+          "name": "status_created",
+          "keys": [
+            [
+              "status",
+              1
+            ],
+            [
+              "created_at",
+              1
+            ]
+          ]
+        },
+        {
+          "name": "user_binding",
+          "keys": [
+            [
+              "user_id",
+              1
+            ],
+            [
+              "binding_id",
+              1
+            ]
+          ]
+        }
+      ]
+    }
+  }
+}

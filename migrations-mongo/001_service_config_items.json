@@ -1,0 +1,13 @@
+{
+  "collections": {
+    "service_config_items": {
+      "indexes": [
+        {
+          "name": "component_key_unique",
+          "keys": [["component_type", 1], ["config_key", 1]],
+          "unique": true
+        }
+      ]
+    }
+  }
+}

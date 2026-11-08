@@ -1,0 +1,13 @@
+{
+  "collections": {
+    "session_head_prompts": {
+      "indexes": [
+        {
+          "name": "scope_owner_unique",
+          "keys": [["scope", 1], ["owner_id", 1]],
+          "unique": true
+        }
+      ]
+    }
+  }
+}

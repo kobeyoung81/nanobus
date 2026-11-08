@@ -1,0 +1,10 @@
+{
+  "skills": {
+    "mdtopdf": { "version": 1 },
+    "officecli": { "version": 1 },
+    "officecli-docx": { "version": 1 },
+    "officecli-pptx": { "version": 1 },
+    "officecli-xlsx": { "version": 1 },
+    "weather": { "version": 1 }
+  }
+}
