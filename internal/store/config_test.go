@@ -9,6 +9,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -19,14 +20,14 @@ import (
 func TestGetConfigItems_SortedAndScoped(t *testing.T) {
 	s := storetest.Connect(t)
 
-	if err := s.SeedConfigItems("nanosec", []store.ConfigItem{
+	if err := seedConfig(t, s, "nanosec", []store.ConfigItem{
 		{Key: "model", Value: "claude-sonnet", ValueType: "string", Description: "LLM model name"},
 		{Key: "max_tokens", Value: "4096", ValueType: "int", Description: "Max tokens per request"},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// A different component must not leak into the result.
-	if err := s.SeedConfigItems("gateway", []store.ConfigItem{
+	if err := seedConfig(t, s, "gateway", []store.ConfigItem{
 		{Key: "port", Value: "8080", ValueType: "int", Description: "Gateway port"},
 	}); err != nil {
 		t.Fatalf("seed gateway: %v", err)
@@ -69,88 +70,6 @@ func TestGetConfigItem_NotFound(t *testing.T) {
 	}
 }
 
-// TestSeedConfigItems_DoesNotOverwrite is the semantic the SQL version expressed
-// with `ON DUPLICATE KEY UPDATE component_type = component_type` — a no-op
-// update, i.e. "insert only". Seeding runs on every start, so an operator who
-// edited a value must not silently lose it.
-func TestSeedConfigItems_DoesNotOverwrite(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.SeedConfigItems("nanosec", []store.ConfigItem{
-		{Key: "model", Value: "default-model", ValueType: "string", Description: "Model name"},
-	}); err != nil {
-		t.Fatalf("first seed: %v", err)
-	}
-	if err := s.SetConfigItem("nanosec", "model", "operator-choice"); err != nil {
-		t.Fatalf("operator set: %v", err)
-	}
-	// Re-seed, as a restart would.
-	if err := s.SeedConfigItems("nanosec", []store.ConfigItem{
-		{Key: "model", Value: "default-model", ValueType: "string", Description: "Model name"},
-	}); err != nil {
-		t.Fatalf("second seed: %v", err)
-	}
-
-	item, err := s.GetConfigItem("nanosec", "model")
-	if err != nil {
-		t.Fatalf("GetConfigItem: %v", err)
-	}
-	if item.Value != "operator-choice" {
-		t.Fatalf("seeding overwrote the operator's value: got %q", item.Value)
-	}
-}
-
-// TestSetConfigItem_KeepsMetadata pins the other half of the SQL upsert's shape:
-// an existing row's value_type and description survived a value change, because
-// the statement only wrote config_value.
-func TestSetConfigItem_KeepsMetadata(t *testing.T) {
-	s := storetest.Connect(t)
-
-	// Seed so value_type is "int" rather than the setter's "string" default.
-	if err := s.SeedConfigItems("nanosec", []store.ConfigItem{
-		{Key: "max_tokens", Value: "4096", ValueType: "int", Description: "Max tokens per request"},
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	if err := s.SetConfigItem("nanosec", "max_tokens", "8192"); err != nil {
-		t.Fatalf("SetConfigItem: %v", err)
-	}
-
-	item, err := s.GetConfigItem("nanosec", "max_tokens")
-	if err != nil {
-		t.Fatalf("GetConfigItem: %v", err)
-	}
-	if item.Value != "8192" {
-		t.Fatalf("value not updated: %q", item.Value)
-	}
-	if item.ValueType != "int" {
-		t.Fatalf("value_type was clobbered: %q", item.ValueType)
-	}
-	if item.Description != "Max tokens per request" {
-		t.Fatalf("description was clobbered: %q", item.Description)
-	}
-}
-
-// TestSetConfigItem_InsertDefaults pins what a brand-new item looks like: the
-// SQL insert supplied value_type 'string' and an empty description.
-func TestSetConfigItem_InsertDefaults(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.SetConfigItem("nanosec", "brand-new", "v"); err != nil {
-		t.Fatalf("SetConfigItem: %v", err)
-	}
-	item, err := s.GetConfigItem("nanosec", "brand-new")
-	if err != nil {
-		t.Fatalf("GetConfigItem: %v", err)
-	}
-	if item.ValueType != "string" || item.Description != "" {
-		t.Fatalf("unexpected insert defaults: %+v", item)
-	}
-}
-
-// TestConfigItems_UniquePerComponentAndKey pins the index the migration
-// declares. Without it, seeding twice would leave two documents and every read
-// would return whichever the server happened to pick.
 func TestConfigItems_UniquePerComponentAndKey(t *testing.T) {
 	s := storetest.Connect(t)
 	ctx := context.Background()
@@ -243,10 +162,10 @@ func TestConfigItemsToMap(t *testing.T) {
 func TestListConfigComponents(t *testing.T) {
 	s := storetest.Connect(t)
 
-	if err := s.SeedConfigItems("gateway", []store.ConfigItem{{Key: "port", Value: "8080"}}); err != nil {
+	if err := seedConfig(t, s, "gateway", []store.ConfigItem{{Key: "port", Value: "8080"}}); err != nil {
 		t.Fatalf("seed gateway: %v", err)
 	}
-	if err := s.SeedConfigItems("agent", []store.ConfigItem{{Key: "model", Value: "m"}}); err != nil {
+	if err := seedConfig(t, s, "agent", []store.ConfigItem{{Key: "model", Value: "m"}}); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
 	// An empty component must not appear: Distinct reads component_type off
@@ -270,4 +189,28 @@ func TestListConfigComponents_Empty(t *testing.T) {
 	if len(components) != 0 {
 		t.Fatalf("expected no components, got %v", components)
 	}
+}
+
+// seedConfig writes config documents directly. The bus no longer writes this
+// collection — nanoadmin owns it — so these read-path tests set up their data
+// the way any other writer in the platform would: an insert.
+func seedConfig(t *testing.T, s *store.Store, component string, items []store.ConfigItem) error {
+	t.Helper()
+	ctx := context.Background()
+	coll := s.DB().Collection("admin_config")
+	for _, item := range items {
+		if _, err := coll.InsertOne(ctx, bson.D{
+			{Key: "component_type", Value: component},
+			{Key: "config_key", Value: item.Key},
+			{Key: "config_value", Value: item.Value},
+			{Key: "value_type", Value: item.ValueType},
+			{Key: "description", Value: item.Description},
+			// The console shows "last changed", so seeded documents carry the
+			// same field the owning service writes.
+			{Key: "updated_at", Value: time.Now().UTC()},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

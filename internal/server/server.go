@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ type Server struct {
 	listener          net.Listener
 	srv               *http.Server
 	nanoauthURL       string
+	adminURL          string
 	chunks            *stream.ChunkBuffer
 	sse               *sseHub
 	events            *sseHub
@@ -34,6 +36,7 @@ type Server struct {
 	voiceSessions     *voiceSessionRegistry
 	rateLimiter       *middleware.RateLimiter
 	internalKey       *middleware.InternalKey
+	internalToken     string
 	maxContentBytes   int
 	mu                sync.Mutex
 	sweeperStop       chan struct{}
@@ -89,6 +92,14 @@ func WithNanoauthURL(url string) ServerOption {
 	}
 }
 
+// WithAdminURL sets the admin module's base URL. Config writes are forwarded
+// there, so the bus never writes the admin_ collections itself.
+func WithAdminURL(url string) ServerOption {
+	return func(s *Server) {
+		s.adminURL = strings.TrimRight(url, "/")
+	}
+}
+
 // WithMaxContentBytes sets the maximum accepted message content size.
 func WithMaxContentBytes(n int) ServerOption {
 	return func(s *Server) {
@@ -112,6 +123,9 @@ func WithRateLimit(limit int, window time.Duration) ServerOption {
 func WithInternalToken(token string) ServerOption {
 	return func(s *Server) {
 		s.internalKey = middleware.NewInternalKey(token)
+		// Kept as a plain string too: forwarding a call to another module needs
+		// the token itself, not just the ability to check one.
+		s.internalToken = token
 	}
 }
 

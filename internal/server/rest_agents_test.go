@@ -112,7 +112,7 @@ func TestRestGetConfig(t *testing.T) {
 	// the response the endpoint produces from actual data rather than the SQL
 	// string a mock was told to expect.
 	s := testServerMongo(t)
-	if err := s.store.SeedConfigItems("agent", []store.ConfigItem{
+	if err := seedConfig(t, s.store, "agent", []store.ConfigItem{
 		{Key: "agent.maxIterations", Value: "10", ValueType: "int"},
 	}); err != nil {
 		t.Fatalf("seed config: %v", err)

@@ -115,7 +115,7 @@ nanobus version                             # Print version info
 nanobus user add <user-id>                  # Register a user
 nanobus user list                           # List all users
 nanobus user link <user-id> <channel> <sender-id>  # Link channel identity
-nanobus config seed                         # Seed default config items for all components
+nanoadmin config seed                       # Seed the platform defaults (admin module)
 nanobus config get <component-type> [key]   # Get config item(s)
 nanobus config set <component-type> <key> <value>  # Set a config item
 nanobus migrate up                          # Apply pending migrations

@@ -17,10 +17,10 @@ import (
 // reader's memory of the SQL it replaced.
 func TestRestListConfig(t *testing.T) {
 	s := testServerMongo(t)
-	if err := s.store.SeedConfigItems("bus", []store.ConfigItem{{Key: "port", Value: "9000"}}); err != nil {
+	if err := seedConfig(t, s.store, "bus", []store.ConfigItem{{Key: "port", Value: "9000"}}); err != nil {
 		t.Fatalf("seed bus: %v", err)
 	}
-	if err := s.store.SeedConfigItems("agent", []store.ConfigItem{{Key: "model", Value: "m"}}); err != nil {
+	if err := seedConfig(t, s.store, "agent", []store.ConfigItem{{Key: "model", Value: "m"}}); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
 
@@ -46,7 +46,7 @@ func TestRestListConfig(t *testing.T) {
 // centre silently.
 func TestRestGetConfig_Items(t *testing.T) {
 	s := testServerMongo(t)
-	if err := s.store.SeedConfigItems("bus", []store.ConfigItem{
+	if err := seedConfig(t, s.store, "bus", []store.ConfigItem{
 		{Key: "port", Value: "9000", ValueType: "int", Description: "Bus port"},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

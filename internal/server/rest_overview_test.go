@@ -82,7 +82,7 @@ func TestRestConfigCountsAndUpdatedAt(t *testing.T) {
 		{Key: "channels.telegram.token", Value: "secret"},
 		{Key: "port", Value: "8080"},
 	} {
-		if err := srv.store.SetConfigItem("gateway", item.Key, item.Value); err != nil {
+		if err := setConfigValue(t, srv.store, "gateway", item.Key, item.Value); err != nil {
 			t.Fatalf("seed config: %v", err)
 		}
 	}

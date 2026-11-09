@@ -52,7 +52,7 @@ func TestRestCreateUser_FirstAccountBecomesAdmin(t *testing.T) {
 
 func TestRestCreateUser_SwitchOff(t *testing.T) {
 	s := testServerMongo(t)
-	if err := s.store.SetConfigItem("auth", "firstUserIsAdmin", "false"); err != nil {
+	if err := setConfigValue(t, s.store, "auth", "firstUserIsAdmin", "false"); err != nil {
 		t.Fatalf("SetConfigItem: %v", err)
 	}
 

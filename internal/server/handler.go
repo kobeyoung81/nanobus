@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
@@ -591,10 +594,32 @@ func (s *Server) handleSetConfigItem(msg nanoprotocol.Message) *nanoprotocol.Mes
 		return &resp
 	}
 
-	if err := s.store.SetConfigItem(req.ComponentType, req.Key, req.Value); err != nil {
+	// The admin module owns the collection; this path forwards like the REST one.
+	if s.adminURL == "" {
+		resp := nanoprotocol.NewErrorMessage("set config item: admin module is not configured")
+		return &resp
+	}
+	target := s.adminURL + "/api/v1/config/" + url.PathEscape(req.ComponentType) + "/" + url.PathEscape(req.Key)
+	httpReq, err := http.NewRequest(http.MethodPut, target, bytes.NewReader(configWriteBody(req.Value, "", "")))
+	if err != nil {
+		resp := nanoprotocol.NewErrorMessage("set config item: " + err.Error())
+		return &resp
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if s.internalToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.internalToken)
+	}
+	if httpResp, err := http.DefaultClient.Do(httpReq); err != nil {
 		slog.Error("set config item failed", "component_type", req.ComponentType, "key", req.Key, "error", err)
 		resp := nanoprotocol.NewErrorMessage("set config item: " + err.Error())
 		return &resp
+	} else {
+		_ = httpResp.Body.Close()
+		if httpResp.StatusCode != http.StatusOK {
+			slog.Error("set config item rejected upstream", "component_type", req.ComponentType, "key", req.Key, "status", httpResp.StatusCode)
+			resp := nanoprotocol.NewErrorMessage("set config item: admin module rejected the write")
+			return &resp
+		}
 	}
 
 	s.emitConfigChanged(req.Key)

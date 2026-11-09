@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -42,22 +43,25 @@ func (s *Server) restSetConfig(w http.ResponseWriter, r *http.Request) {
 	component := r.PathValue("component")
 	key := r.PathValue("key")
 
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxConfigBody))
+	if err != nil {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+		return
+	}
 	var body struct {
 		Value string `json:"value"`
 		// Optional, and used only when the item is created: a component that owns
-		// the key it writes (the auth service's JWT keypair) declares its kind, and
+		// a key it writes (the auth service's JWT keypair) declares its kind, and
 		// `secret` is what makes the console mask it.
 		ValueType   string `json:"value_type,omitempty"`
 		Description string `json:"description,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if err := s.store.SetConfigItemTyped(component, key, body.Value, body.ValueType, body.Description); err != nil {
-		slog.Error("set config item", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	if !s.forwardConfigWrite(w, r, component, key, configWriteBody(body.Value, body.ValueType, body.Description)) {
 		return
 	}
 
@@ -67,9 +71,5 @@ func (s *Server) restSetConfig(w http.ResponseWriter, r *http.Request) {
 		"key":       key,
 	})
 
-	writeJSON(w, http.StatusOK, nanoprotocol.SetConfigItemResponse{
-		ComponentType: component,
-		Key:           key,
-		Value:         body.Value,
-	})
+	writeJSON(w, http.StatusOK, configWriteResponse(component, key, body.Value))
 }

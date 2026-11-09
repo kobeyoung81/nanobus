@@ -46,6 +46,7 @@ func LoadBusConfig(path string) (BusConfig, error) {
 		"server.max_content_bytes",
 		"database.uri",
 		"nanoauth.base_url",
+		"admin.base_url",
 		"internal_token",
 	} {
 		v.BindEnv(key)
