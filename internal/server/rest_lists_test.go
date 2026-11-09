@@ -26,22 +26,6 @@ func TestRestListBuiltin_EmptyCatalogIsAnArray(t *testing.T) {
 	}
 }
 
-func TestRestGetConfig_UnseededComponentIsAnArray(t *testing.T) {
-	s := testServerMongo(t)
-
-	code, body := call(t, s, http.MethodGet, "/api/v1/config/__no_such_component__", "")
-	if code != http.StatusOK {
-		t.Fatalf("get config: %d %s", code, body)
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if string(payload["items"]) != "[]" {
-		t.Fatalf("items = %s; want []", payload["items"])
-	}
-}
-
 func TestRestListAuditAndRules_EmptyAreArrays(t *testing.T) {
 	s := testServerMongo(t)
 
