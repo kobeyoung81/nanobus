@@ -175,9 +175,8 @@ func TestMigrations_DeclareAuditIndexes(t *testing.T) {
 	assertIndexKeys(t, s.DB().Collection("admin_audit_log"), "created_at_desc", [][2]any{
 		{"created_at", int32(-1)}, {"_id", int32(-1)},
 	})
-	assertIndexKeys(t, s.DB().Collection("admin_alert_rules"), "enabled_order", [][2]any{
-		{"enabled", int32(1)}, {"_id", int32(1)},
-	})
+	// Alert rules are the admin module's collection now; its own manifest
+	// declares that index and its own tests assert it.
 
 	// The three single-field indexes the SQL table carried, kept because the
 	// admin UI filters the audit trail by each of them.
