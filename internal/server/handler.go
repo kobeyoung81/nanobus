@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
+	"context"
 	"errors"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
@@ -79,10 +77,6 @@ func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
 		return s.handleUpdateWeChatKFCursor(msg)
 	case nanoprotocol.TypeUpdateWeChatKFCallbackTok:
 		return s.handleUpdateWeChatKFCallbackToken(msg)
-	case nanoprotocol.TypeGetConfigItems:
-		return s.handleGetConfigItems(msg)
-	case nanoprotocol.TypeSetConfigItem:
-		return s.handleSetConfigItem(msg)
 	case nanoprotocol.TypeGetCapabilities:
 		return s.handleGetCapabilities(msg)
 	case nanoprotocol.TypeGetAgentSnapshot:
@@ -450,28 +444,6 @@ func (s *Server) handleUpdateWeChatKFCallbackToken(msg nanoprotocol.Message) *na
 	return &resp
 }
 
-func (s *Server) handleGetConfigItems(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.GetConfigItemsRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	items, err := s.store.GetConfigItems(req.ComponentType)
-	if err != nil {
-		slog.Error("get config items failed", "component_type", req.ComponentType, "error", err)
-		resp := nanoprotocol.NewErrorMessage("get config items: " + err.Error())
-		return &resp
-	}
-
-	slog.Debug("served config items", "component_type", req.ComponentType, "count", len(items))
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeConfigItems, nanoprotocol.GetConfigItemsResponse{
-		ComponentType: req.ComponentType,
-		Items:         items,
-	})
-	return &resp
-}
-
 func (s *Server) handleGetCapabilities(msg nanoprotocol.Message) *nanoprotocol.Message {
 	var req nanoprotocol.GetCapabilitiesRequest
 	if err := msg.DecodePayload(&req); err != nil {
@@ -521,7 +493,7 @@ func (s *Server) handleGetAgentSnapshot(msg nanoprotocol.Message) *nanoprotocol.
 		resp := nanoprotocol.NewErrorMessage("get capabilities: " + err.Error())
 		return &resp
 	}
-	config, err := s.store.GetConfigItems("agent")
+	config, err := s.configItems(context.Background(), "agent")
 	if err != nil {
 		resp := nanoprotocol.NewErrorMessage("get config: " + err.Error())
 		return &resp
@@ -579,56 +551,11 @@ func (s *Server) handleBuiltinToolsSync(msg nanoprotocol.Message) *nanoprotocol.
 		return &resp
 	}
 	slog.Info("builtin tools synced", "agent_id", req.AgentID, "count", len(req.Tools))
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeConfigItemSet, nanoprotocol.SetConfigItemResponse{
-		ComponentType: "agent",
-		Key:           "capabilities.builtin",
-		Value:         "synced",
-	})
-	return &resp
-}
-
-func (s *Server) handleSetConfigItem(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.SetConfigItemRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	// The admin module owns the collection; this path forwards like the REST one.
-	if s.adminURL == "" {
-		resp := nanoprotocol.NewErrorMessage("set config item: admin module is not configured")
-		return &resp
-	}
-	target := s.adminURL + "/api/v1/config/" + url.PathEscape(req.ComponentType) + "/" + url.PathEscape(req.Key)
-	httpReq, err := http.NewRequest(http.MethodPut, target, bytes.NewReader(configWriteBody(req.Value, "", "")))
-	if err != nil {
-		resp := nanoprotocol.NewErrorMessage("set config item: " + err.Error())
-		return &resp
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if s.internalToken != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+s.internalToken)
-	}
-	if httpResp, err := http.DefaultClient.Do(httpReq); err != nil {
-		slog.Error("set config item failed", "component_type", req.ComponentType, "key", req.Key, "error", err)
-		resp := nanoprotocol.NewErrorMessage("set config item: " + err.Error())
-		return &resp
-	} else {
-		_ = httpResp.Body.Close()
-		if httpResp.StatusCode != http.StatusOK {
-			slog.Error("set config item rejected upstream", "component_type", req.ComponentType, "key", req.Key, "status", httpResp.StatusCode)
-			resp := nanoprotocol.NewErrorMessage("set config item: admin module rejected the write")
-			return &resp
-		}
-	}
-
-	s.emitConfigChanged(req.Key)
-
-	slog.Info("config item updated", "component_type", req.ComponentType, "key", req.Key)
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeConfigItemSet, nanoprotocol.SetConfigItemResponse{
-		ComponentType: req.ComponentType,
-		Key:           req.Key,
-		Value:         req.Value,
+	// The acknowledgement is a plain message: the config item types are gone
+	// with the config surface. The agent only checks for an error answer.
+	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeBuiltinToolsSync, map[string]any{
+		"agent_id": req.AgentID,
+		"count":    len(req.Tools),
 	})
 	return &resp
 }

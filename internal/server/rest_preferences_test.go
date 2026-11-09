@@ -16,7 +16,7 @@ import (
 func TestRestPreferences(t *testing.T) {
 	srv := testServerMongo(t)
 	storetest.SeedUser(t, srv.store, "u-1", "free", 0)
-	if err := setConfigValue(t, srv.store, "agent", "agent.language.default", "zh"); err != nil {
+	if err := setConfigValue(t, srv, "agent", "agent.language.default", "zh"); err != nil {
 		t.Fatalf("seed platform default: %v", err)
 	}
 

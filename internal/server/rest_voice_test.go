@@ -60,7 +60,7 @@ func seedVoiceConfigWithBatch(t *testing.T, s *Server, enabled bool, providerID,
 
 func seedVoiceConfigItems(t *testing.T, s *Server, items []store.ConfigItem) {
 	t.Helper()
-	if err := seedConfig(t, s.store, voice.Component, items); err != nil {
+	if err := seedConfig(t, s, voice.Component, items); err != nil {
 		t.Fatalf("seed voice config: %v", err)
 	}
 }
@@ -324,7 +324,7 @@ func TestRestVoicePolish_PassesTheThinkingEffort(t *testing.T) {
 
 	s := testServerMongo(t)
 	seedVoiceConfig(t, s, true, "7", "gpt-4o-transcribe", "3")
-	if err := setConfigValue(t, s.store, voice.Component, "polish.thinking", "high"); err != nil {
+	if err := setConfigValue(t, s, voice.Component, "polish.thinking", "high"); err != nil {
 		t.Fatalf("seed polish.thinking: %v", err)
 	}
 	seedChatModel(t, s, 3, 7, "Fast Chat", "gpt-4o-mini")
@@ -345,7 +345,7 @@ func TestRestVoicePolish_DisabledReturnsTextUnchanged(t *testing.T) {
 	// Nothing to seed: the polish path is disabled by configuration, so it never
 	// reaches the provider or model lookups.
 	s := testServerMongo(t)
-	if err := seedConfig(t, s.store, voice.Component, []store.ConfigItem{
+	if err := seedConfig(t, s, voice.Component, []store.ConfigItem{
 		{Key: "enabled", Value: "true", ValueType: "bool"},
 		{Key: "polish.enabled", Value: "false", ValueType: "bool"},
 	}); err != nil {

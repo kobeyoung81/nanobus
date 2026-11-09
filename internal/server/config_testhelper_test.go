@@ -1,54 +1,80 @@
 package server
 
 import (
-	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
-	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
-
+	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 )
 
-// seedConfig writes config documents directly: the bus no longer writes this
-// collection (nanoadmin owns it), so tests set up their data the way another
-// writer would, with an insert.
-func seedConfig(t *testing.T, s *store.Store, component string, items []store.ConfigItem) error {
+// adminConfigStub is a fake admin module. The bus reads configuration from
+// admin, not from a collection it owns, so tests that need configuration serve
+// it the way the deployment does: over HTTP.
+type adminConfigStub struct {
+	mu    sync.Mutex
+	items map[string][]store.ConfigItem
+	srv   *httptest.Server
+}
+
+var adminStubs sync.Map // *Server → *adminConfigStub
+
+// adminStubFor attaches (once) a fake admin module to a server and returns it.
+func adminStubFor(t *testing.T, s *Server) *adminConfigStub {
 	t.Helper()
-	ctx := context.Background()
-	coll := s.DB().Collection("admin_config")
-	for _, item := range items {
-		if _, err := coll.InsertOne(ctx, bson.D{
-			{Key: "component_type", Value: component},
-			{Key: "config_key", Value: item.Key},
-			{Key: "config_value", Value: item.Value},
-			{Key: "value_type", Value: item.ValueType},
-			{Key: "description", Value: item.Description},
-			// The console shows "last changed", so seeded documents carry the
-			// same field the owning service writes.
-			{Key: "updated_at", Value: time.Now().UTC()},
-		}); err != nil {
-			return err
-		}
+	if existing, ok := adminStubs.Load(s); ok {
+		return existing.(*adminConfigStub)
 	}
+
+	stub := &adminConfigStub{items: map[string][]store.ConfigItem{}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/config/{component}", func(w http.ResponseWriter, r *http.Request) {
+		component := r.PathValue("component")
+		stub.mu.Lock()
+		items := append([]store.ConfigItem(nil), stub.items[component]...)
+		stub.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"component_type": component,
+			"items":          items,
+		})
+	})
+	stub.srv = httptest.NewServer(mux)
+	t.Cleanup(stub.srv.Close)
+
+	s.admin = adminclient.New(stub.srv.URL, "test-token")
+	adminStubs.Store(s, stub)
+	return stub
+}
+
+// seedConfig serves configuration to the server through the fake admin module,
+// mirroring production: the bus no longer writes (or reads) this collection.
+func seedConfig(t *testing.T, s *Server, component string, items []store.ConfigItem) error {
+	t.Helper()
+	stub := adminStubFor(t, s)
+	stub.mu.Lock()
+	stub.items[component] = append(stub.items[component], items...)
+	stub.mu.Unlock()
 	return nil
 }
 
-// setConfigValue overwrites (or creates) one item's value, matching what the
-// admin module's upsert does for an existing key.
-func setConfigValue(t *testing.T, s *store.Store, component, key, value string) error {
+// setConfigValue overwrites one item in the fake admin module, matching what the
+// admin service's upsert does for an existing key.
+func setConfigValue(t *testing.T, s *Server, component, key, value string) error {
 	t.Helper()
-	ctx := context.Background()
-	coll := s.DB().Collection("admin_config")
-	_, err := coll.UpdateOne(ctx,
-		bson.D{{Key: "component_type", Value: component}, {Key: "config_key", Value: key}},
-		bson.D{{Key: "$set", Value: bson.D{
-			{Key: "config_value", Value: value},
-			{Key: "updated_at", Value: time.Now().UTC()},
-		}}},
-		// Upsert: the auth keypair tests set a value that may not exist yet.
-		options.UpdateOne().SetUpsert(true),
-	)
-	return err
+	stub := adminStubFor(t, s)
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	for i, item := range stub.items[component] {
+		if item.Key == key {
+			stub.items[component][i].Value = value
+			return nil
+		}
+	}
+	stub.items[component] = append(stub.items[component], store.ConfigItem{Key: key, Value: value})
+	return nil
 }

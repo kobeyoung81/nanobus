@@ -117,9 +117,6 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/conversations/{sessionID}", s.restGetConversation)
 
 	// Config
-	mux.HandleFunc("GET /api/v1/config", s.restListConfig)
-	mux.HandleFunc("GET /api/v1/config/{component}", s.restGetConfig)
-	mux.HandleFunc("PUT /api/v1/config/{component}/{key}", s.restSetConfig)
 
 	// Containers + runners
 	mux.HandleFunc("POST /api/v1/containers", s.restRequestContainer)
@@ -144,8 +141,6 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// and the two configuration figures.
 	mux.HandleFunc("GET /api/v1/queues/counts", s.restCountQueues)
 	mux.HandleFunc("GET /api/v1/wechat-kf/counts", s.restCountWeChatKF)
-	mux.HandleFunc("GET /api/v1/config-updated-at/{component}", s.restConfigUpdatedAt)
-	mux.HandleFunc("GET /api/v1/config-counts/{component}", s.restCountConfigItems)
 	mux.HandleFunc("DELETE /api/v1/runners/{id}", s.restDeleteRunner)
 
 	// Auth reverse proxy → nanoauth

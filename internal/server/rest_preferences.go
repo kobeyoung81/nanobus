@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -36,11 +37,16 @@ func normalizeLanguage(tag string) string {
 
 // platformLanguage returns the configured platform default ("" when unset).
 func (s *Server) platformLanguage() string {
-	item, err := s.store.GetConfigItem("agent", "agent.language.default")
+	items, err := s.configItems(context.Background(), "agent")
 	if err != nil {
 		return ""
 	}
-	return normalizeLanguage(item.Value)
+	for _, item := range items {
+		if item.Key == "agent.language.default" {
+			return normalizeLanguage(item.Value)
+		}
+	}
+	return ""
 }
 
 type preferencesResponse struct {

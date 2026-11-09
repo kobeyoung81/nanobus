@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -20,11 +21,16 @@ import (
 // installation seeded before the switch existed has no row for it, and the
 // bootstrap rule is the behaviour it is meant to have.
 func (s *Server) firstUserIsAdmin() bool {
-	item, err := s.store.GetConfigItem("auth", "firstUserIsAdmin")
+	items, err := s.configItems(context.Background(), "auth")
 	if err != nil {
 		return true
 	}
-	return strings.EqualFold(strings.TrimSpace(item.Value), "true")
+	for _, item := range items {
+		if item.Key == "firstUserIsAdmin" {
+			return strings.EqualFold(strings.TrimSpace(item.Value), "true")
+		}
+	}
+	return true
 }
 
 // maybeBootstrapAdmin promotes the account a sign-up has just created while the

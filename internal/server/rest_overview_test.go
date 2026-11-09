@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
-
-	"gitee.com/kobeyoung81/nanobus/internal/store"
 )
 
 // The overview's remaining numbers. Each was a SELECT against MySQL, and each has a
@@ -70,60 +68,5 @@ func TestRestCountWeChatKF(t *testing.T) {
 	}
 	if body.Accounts != 2 {
 		t.Fatalf("accounts = %d, want 2", body.Accounts)
-	}
-}
-
-func TestRestConfigCountsAndUpdatedAt(t *testing.T) {
-	srv := testServerMongo(t)
-
-	for _, item := range []store.ConfigItem{
-		{Key: "channels.web.enabled", Value: "true"},
-		{Key: "channels.telegram.enabled", Value: "false"},
-		{Key: "channels.telegram.token", Value: "secret"},
-		{Key: "port", Value: "8080"},
-	} {
-		if err := setConfigValue(t, srv.store, "gateway", item.Key, item.Value); err != nil {
-			t.Fatalf("seed config: %v", err)
-		}
-	}
-
-	// How many channels are enabled: a pattern over keys plus a value filter.
-	rec := accountRequest(t, srv, http.MethodGet,
-		"/api/v1/config-counts/gateway?key_prefix=channels.&key_suffix=.enabled&value=true", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	var countBody struct {
-		Count int `json:"count"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &countBody); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if countBody.Count != 1 {
-		t.Fatalf("count = %d, want 1 (only channels.web.enabled is true)", countBody.Count)
-	}
-
-	// An unknown component has no write time, and that is not an error.
-	missing := accountRequest(t, srv, http.MethodGet, "/api/v1/config-updated-at/nobody", nil)
-	if missing.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", missing.Code)
-	}
-	var updatedBody struct {
-		UpdatedAt string `json:"updated_at"`
-	}
-	if err := json.Unmarshal(missing.Body.Bytes(), &updatedBody); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if updatedBody.UpdatedAt != "" {
-		t.Fatalf("expected an empty timestamp, got %q", updatedBody.UpdatedAt)
-	}
-
-	// A component with configuration reports when it last changed.
-	known := accountRequest(t, srv, http.MethodGet, "/api/v1/config-updated-at/gateway", nil)
-	if err := json.Unmarshal(known.Body.Bytes(), &updatedBody); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if updatedBody.UpdatedAt == "" {
-		t.Fatal("expected a timestamp for a configured component")
 	}
 }

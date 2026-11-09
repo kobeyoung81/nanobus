@@ -58,7 +58,7 @@ for gateway and agent connections.`,
 
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
-				server.WithAdminURL(cfg.Admin.BaseURL),
+				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
 				server.WithMaxContentBytes(cfg.Server.MaxContentBytes),
 				server.WithInternalToken(cfg.InternalToken),
 			)
@@ -84,7 +84,6 @@ for gateway and agent connections.`,
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "path to bus config file")
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newUserCmd(&configPath))
-	rootCmd.AddCommand(newConfigCmd(&configPath))
 	rootCmd.AddCommand(newSkillsCmd(&configPath))
 	rootCmd.AddCommand(newPromptsCmd(&configPath))
 	rootCmd.AddCommand(newPermissionsCmd(&configPath))
@@ -180,58 +179,6 @@ Examples:
 				return fmt.Errorf("link channel: %w", err)
 			}
 			fmt.Printf("Linked %s/%s to user %q.\n", channel, senderID, userID)
-			return nil
-		},
-	}
-}
-
-func newConfigCmd(configPath *string) *cobra.Command {
-	configCmd := &cobra.Command{
-		Use:   "config",
-		Short: "Manage service configurations stored in the database",
-	}
-	// The defaults moved with the domain: `nanoadmin config seed` seeds them,
-	// and writes go through the admin API. Only the read stays here.
-	configCmd.AddCommand(newConfigGetCmd(configPath))
-	return configCmd
-}
-
-func newConfigGetCmd(configPath *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "get <component-type> [key]",
-		Short: "Print configuration items for a component type, or a single key",
-		Args:  cobra.RangeArgs(1, 2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore(configPath)
-			if err != nil {
-				return err
-			}
-			defer s.Close()
-
-			if len(args) == 2 {
-				item, err := s.GetConfigItem(args[0], args[1])
-				if err != nil {
-					return fmt.Errorf("get config item: %w", err)
-				}
-				fmt.Printf("%s = %s  [%s] %s\n", item.Key, item.Value, item.ValueType, item.Description)
-				return nil
-			}
-
-			items, err := s.GetConfigItems(args[0])
-			if err != nil {
-				return fmt.Errorf("get config items: %w", err)
-			}
-			if len(items) == 0 {
-				fmt.Printf("No config items for %q.\n", args[0])
-				return nil
-			}
-			for _, item := range items {
-				val := item.Value
-				if item.ValueType == "secret" && val != "" {
-					val = "****"
-				}
-				fmt.Printf("  %-40s = %-30s [%s]\n", item.Key, val, item.ValueType)
-			}
 			return nil
 		},
 	}

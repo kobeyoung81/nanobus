@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 )
 
@@ -107,31 +106,6 @@ func TestRestListAgents(t *testing.T) {
 	}
 }
 
-func TestRestGetConfig(t *testing.T) {
-	// Read through the HTTP layer against a real store, so what is asserted is
-	// the response the endpoint produces from actual data rather than the SQL
-	// string a mock was told to expect.
-	s := testServerMongo(t)
-	if err := seedConfig(t, s.store, "agent", []store.ConfigItem{
-		{Key: "agent.maxIterations", Value: "10", ValueType: "int"},
-	}); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/config/agent", nil)
-	rec := httptest.NewRecorder()
-	restMux(t, s).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte("agent.maxIterations")) {
-		t.Fatalf("expected config key in body, got %s", rec.Body.String())
-	}
-}
-
-// The user-facing agent update is the write path for the per-agent settings the
-// UI owns; anything outside the whitelist must be refused, not stored.
 func TestRestUpdateAgent_SettingsValidation(t *testing.T) {
 	for name, body := range map[string]string{
 		"scheduled_task_mode": `{"settings":{"scheduled_task_mode":"plan"}}`,

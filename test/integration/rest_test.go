@@ -32,12 +32,11 @@ func TestServerAroundARealStore(t *testing.T) {
 		t.Fatal("expected a server")
 	}
 
-	items, err := s.GetConfigItems("test")
-	if err != nil {
-		t.Fatalf("an empty store must not be an error: %v", err)
-	}
-	if len(items) != 0 {
-		t.Fatalf("expected no configuration, got %d items", len(items))
+	// The store no longer answers configuration questions at all: it is not
+	// this service's collection. The check that remains meaningful here is that
+	// the server assembles from a real store.
+	if s.DB() == nil {
+		t.Fatal("expected a database handle")
 	}
 }
 

@@ -9,10 +9,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/middleware"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/stream"
@@ -26,7 +26,7 @@ type Server struct {
 	listener          net.Listener
 	srv               *http.Server
 	nanoauthURL       string
-	adminURL          string
+	admin             *adminclient.Client
 	chunks            *stream.ChunkBuffer
 	sse               *sseHub
 	events            *sseHub
@@ -92,11 +92,12 @@ func WithNanoauthURL(url string) ServerOption {
 	}
 }
 
-// WithAdminURL sets the admin module's base URL. Config writes are forwarded
-// there, so the bus never writes the admin_ collections itself.
-func WithAdminURL(url string) ServerOption {
+// WithAdminURL sets the admin module's base URL. The bus does not serve
+// configuration any more; it reads the voice component from here for its own
+// user-facing endpoint.
+func WithAdminURL(url, token string) ServerOption {
 	return func(s *Server) {
-		s.adminURL = strings.TrimRight(url, "/")
+		s.admin = adminclient.New(url, token)
 	}
 }
 

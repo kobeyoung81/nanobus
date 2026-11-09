@@ -63,7 +63,7 @@ func (e *errVoiceUnavailable) Error() string {
 // voiceConfig loads the platform voice settings and reports whether dictation
 // can run at all.
 func (s *Server) voiceConfig() (voice.Config, error) {
-	items, err := s.store.GetConfigItems(voice.Component)
+	items, err := s.configItems(context.Background(), voice.Component)
 	if err != nil {
 		return voice.Config{}, fmt.Errorf("load voice config: %w", err)
 	}
@@ -111,7 +111,7 @@ func (s *Server) voiceProvider() (voice.Config, voice.Provider, error) {
 func (s *Server) batchProvider() (voice.Config, voice.Provider, error) {
 	var cfg voice.Config
 
-	items, err := s.store.GetConfigItems(voice.Component)
+	items, err := s.configItems(context.Background(), voice.Component)
 	if err != nil {
 		return cfg, voice.Provider{}, fmt.Errorf("load voice config: %w", err)
 	}
@@ -146,7 +146,7 @@ func (s *Server) restVoiceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := s.store.GetConfigItems(voice.Component)
+	items, err := s.configItems(context.Background(), voice.Component)
 	if err != nil {
 		slog.Error("voice: load config", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -271,7 +271,7 @@ func (s *Server) restVoicePolish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := s.store.GetConfigItems(voice.Component)
+	items, err := s.configItems(context.Background(), voice.Component)
 	if err != nil {
 		slog.Error("voice: load config", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
