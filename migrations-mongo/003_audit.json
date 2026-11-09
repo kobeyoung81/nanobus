@@ -4,27 +4,47 @@
       "indexes": [
         {
           "name": "created_at_desc",
-          "keys": [["created_at", -1], ["_id", -1]]
+          "keys": [
+            [
+              "created_at",
+              -1
+            ],
+            [
+              "_id",
+              -1
+            ]
+          ]
         },
         {
           "name": "action",
-          "keys": [["action", 1]]
+          "keys": [
+            [
+              "action",
+              1
+            ]
+          ]
         },
         {
           "name": "actor_id",
-          "keys": [["actor_id", 1]]
+          "keys": [
+            [
+              "actor_id",
+              1
+            ]
+          ]
         },
         {
           "name": "resource",
-          "keys": [["resource_type", 1], ["resource_id", 1]]
-        }
-      ]
-    },
-    "admin_alert_rules": {
-      "indexes": [
-        {
-          "name": "enabled_order",
-          "keys": [["enabled", 1], ["_id", 1]]
+          "keys": [
+            [
+              "resource_type",
+              1
+            ],
+            [
+              "resource_id",
+              1
+            ]
+          ]
         }
       ]
     }

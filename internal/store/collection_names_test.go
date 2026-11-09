@@ -14,7 +14,7 @@ import (
 func TestCollectionNamesCarryTheirModulePrefix(t *testing.T) {
 	owned := map[string][]string{
 		"auth_":        {usersCollection, oauthProvidersCollection, refreshTokensCollection, gitShortcutsCollection, userSecretsCollection},
-		"admin_":       {agentTypesCollection, agentTypeOverridesCollection, permissionKeysCollection, modelsCollection, modelProvidersCollection, auditLogCollection, alertRulesCollection, builtinToolsCollection, mcpServersCollection, skillsCollection, userSkillAcksCollection, sessionHeadPromptsCollection},
+		"admin_":       {agentTypesCollection, agentTypeOverridesCollection, permissionKeysCollection, modelsCollection, modelProvidersCollection, auditLogCollection, builtinToolsCollection, mcpServersCollection, skillsCollection, userSkillAcksCollection, sessionHeadPromptsCollection},
 		"portal_":      {agentsCollection, agentSessionsCollection, agentGroupsCollection, bindingAgentsCollection},
 		"bus_":         {inboundQueueCollection, outboundQueueCollection, wechatKFSyncStateCollection},
 		"provisioner_": {containerRequestsCollection, runnersCollection},

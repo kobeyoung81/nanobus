@@ -146,12 +146,9 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// Auth reverse proxy → nanoauth
 	s.registerAuthProxy(mux)
 
-	// Enterprise admin: audit trail + alert rules
+	// Enterprise admin: audit trail (alert rules live in the admin module).
 	mux.HandleFunc("GET /api/v1/audit", s.restListAudit)
 	mux.HandleFunc("POST /api/v1/audit", s.restRecordAudit)
-	mux.HandleFunc("GET /api/v1/alert-rules", s.restListAlertRules)
-	mux.HandleFunc("POST /api/v1/alert-rules", s.restUpsertAlertRule)
-	mux.HandleFunc("DELETE /api/v1/alert-rules/{id}", s.restDeleteAlertRule)
 
 	// Capability catalog: admin management
 	mux.HandleFunc("GET /api/v1/capabilities/builtin", s.restListBuiltin)

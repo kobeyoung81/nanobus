@@ -34,21 +34,9 @@ type AuditEntry struct {
 	CreatedAt    time.Time      `json:"created_at"`
 }
 
-// AlertRule is a row in the alert_rules table.
-type AlertRule struct {
-	ID        int64     `json:"id"`
-	Severity  string    `json:"severity"`
-	Message   string    `json:"message"`
-	Metric    string    `json:"metric"`
-	Threshold float64   `json:"threshold"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-const (
-	auditLogCollection   = "admin_audit_log"
-	alertRulesCollection = "admin_alert_rules"
-)
+// auditLogCollection holds the audit trail; alert rules live in the admin
+// module now, with the rest of the catalogues.
+const auditLogCollection = "admin_audit_log"
 
 // auditLog returns the audit trail collection, configured so a decoded nested
 // value comes back as a map rather than the driver's default.
@@ -293,111 +281,6 @@ func (s *Store) fillResourceNames(ctx context.Context, entries []AuditEntry) err
 		case "agent_group":
 			entries[i].ResourceName = groupNames[entries[i].ResourceID]
 		}
-	}
-	return nil
-}
-
-// storedAlertRule is the alert_rules document shape.
-type storedAlertRule struct {
-	ID        int64     `bson:"_id"`
-	Severity  string    `bson:"severity"`
-	Message   string    `bson:"message"`
-	Metric    string    `bson:"metric"`
-	Threshold float64   `bson:"threshold"`
-	Enabled   bool      `bson:"enabled"`
-	CreatedAt time.Time `bson:"created_at"`
-	UpdatedAt time.Time `bson:"updated_at"`
-}
-
-func (d storedAlertRule) rule() AlertRule {
-	return AlertRule{
-		ID: d.ID, Severity: d.Severity, Message: d.Message,
-		Metric: d.Metric, Threshold: d.Threshold, Enabled: d.Enabled,
-		CreatedAt: d.CreatedAt,
-	}
-}
-
-// ListAlertRules returns enabled alert rules.
-func (s *Store) ListAlertRules() ([]AlertRule, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// Sorted by _id, which is the order the SQL's ORDER BY id ASC asked for and
-	// the order the admin UI lists them in.
-	cur, err := s.db.Collection(alertRulesCollection).Find(ctx,
-		bson.D{{Key: "enabled", Value: true}},
-		options.Find().SetSort(bson.D{{Key: "_id", Value: 1}}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list alert rules: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	rules := []AlertRule{}
-	for cur.Next(ctx) {
-		var doc storedAlertRule
-		if err := cur.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("decode alert rule: %w", err)
-		}
-		rules = append(rules, doc.rule())
-	}
-	return rules, cur.Err()
-}
-
-// UpsertAlertRule inserts or updates an alert rule, returning the id it holds
-// afterwards — the console shows the rule it just created, and an insert is where
-// that id is decided.
-func (s *Store) UpsertAlertRule(rule AlertRule) (int64, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-	coll := s.db.Collection(alertRulesCollection)
-	now := time.Now().UTC()
-
-	// A zero id means "new rule", exactly as it did with AUTO_INCREMENT.
-	if rule.ID == 0 {
-		id, err := s.nextSequence(ctx, alertRulesCollection)
-		if err != nil {
-			return 0, err
-		}
-		doc := storedAlertRule{
-			ID: id, Severity: rule.Severity, Message: rule.Message, Metric: rule.Metric,
-			Threshold: rule.Threshold, Enabled: rule.Enabled,
-			CreatedAt: now, UpdatedAt: now,
-		}
-		if _, err := coll.InsertOne(ctx, doc); err != nil {
-			return 0, fmt.Errorf("insert alert rule: %w", err)
-		}
-		return id, nil
-	}
-
-	// The SQL UPDATE matched zero rows for an unknown id and reported no error,
-	// so neither does this.
-	_, err := coll.UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: rule.ID}},
-		bson.D{{Key: "$set", Value: bson.D{
-			{Key: "severity", Value: rule.Severity},
-			{Key: "message", Value: rule.Message},
-			{Key: "metric", Value: rule.Metric},
-			{Key: "threshold", Value: rule.Threshold},
-			{Key: "enabled", Value: rule.Enabled},
-			// ON UPDATE CURRENT_TIMESTAMP, kept explicitly.
-			{Key: "updated_at", Value: now},
-		}}},
-	)
-	if err != nil {
-		return 0, fmt.Errorf("update alert rule: %w", err)
-	}
-	return rule.ID, nil
-}
-
-// DeleteAlertRule removes an alert rule.
-func (s *Store) DeleteAlertRule(id int64) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// Deleting an id that is not there is not an error, matching the SQL.
-	if _, err := s.db.Collection(alertRulesCollection).DeleteOne(ctx, bson.D{{Key: "_id", Value: id}}); err != nil {
-		return fmt.Errorf("delete alert rule: %w", err)
 	}
 	return nil
 }
