@@ -68,6 +68,9 @@ func LoadBusConfig(path string) (BusConfig, error) {
 	}
 	cfg.Database.URI = v.GetString("database.uri")
 	cfg.Nanoauth.BaseURL = v.GetString("nanoauth.base_url")
+	// Trailing slashes would produce "//api/v1/..." when the forwarder joins
+	// paths, and an empty value is meaningful: it refuses every config write.
+	cfg.Admin.BaseURL = strings.TrimRight(v.GetString("admin.base_url"), "/")
 	cfg.InternalToken = strings.TrimSpace(v.GetString("internal_token"))
 	return cfg, nil
 }

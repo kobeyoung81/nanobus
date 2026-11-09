@@ -88,3 +88,18 @@ func TestLoadBusConfig_FileWithEnvOverride(t *testing.T) {
 		t.Errorf("expected file port, got %d", cfg.Server.Port)
 	}
 }
+
+// The admin URL decides whether a config write is forwarded at all: empty means
+// "refuse", so a loader that silently drops the env var turns every console save
+// into a 503. It has no default, which is exactly the case viper's Unmarshal
+// drops unless the key is registered.
+func TestLoadBusConfigReadsTheAdminURL(t *testing.T) {
+	t.Setenv("NANOSEC_BUS_ADMIN_BASE_URL", "http://nanoadmin:8080")
+	cfg, err := LoadBusConfig("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Admin.BaseURL != "http://nanoadmin:8080" {
+		t.Fatalf("admin base url = %q", cfg.Admin.BaseURL)
+	}
+}
