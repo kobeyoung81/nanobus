@@ -16,12 +16,17 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
 // Store provides access to the platform database.
 type Store struct {
 	mongo *mongo.Client
 	db    *mongo.Database
+	// readOnlyKeys supplies the permission catalog's read-only keys. They live
+	// in the admin module; the bus asks over HTTP.
+	readOnlyKeys func() (map[string]nanoprotocol.PermissionAction, error)
 }
 
 // Open connects to MongoDB and returns a Store. It pings the server so a bad URI

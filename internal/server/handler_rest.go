@@ -165,7 +165,6 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// bundle this binary ships, and the single-type restore behind that.
 	mux.HandleFunc("GET /api/v1/agent-types/prompt-status", s.restAgentTypePromptStatus)
 	mux.HandleFunc("POST /api/v1/agent-types/{id}/prompt/reset", s.restResetAgentTypePrompt)
-	mux.HandleFunc("GET /api/v1/permission-keys", s.restListPermissionKeys)
 	mux.HandleFunc("GET /api/v1/capabilities/mcp", s.restListMcpAdmin)
 	mux.HandleFunc("POST /api/v1/capabilities/mcp", s.restCreateMcpAdmin)
 	mux.HandleFunc("POST /api/v1/capabilities/mcp/test", s.restTestMcpAdmin)

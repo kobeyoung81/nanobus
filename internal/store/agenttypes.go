@@ -817,111 +817,22 @@ func (s *Store) SeedAgentTypes(defs []nanoprotocol.AgentTypeDef) (inserted int, 
 
 // ======== permission keys ========
 
-const permissionKeysCollection = "admin_permission_keys"
-
-// storedPermissionKey is a catalog entry.
-//
-// No migration manifest names this collection: every read is by _id — including
-// the listing, which orders by it — and MongoDB indexes _id with the collection.
-type storedPermissionKey struct {
-	ID            string                        `bson:"_id"`
-	Description   string                        `bson:"description,omitempty"`
-	DefaultAction nanoprotocol.PermissionAction `bson:"default_action"`
-	ReadOnly      bool                          `bson:"read_only"`
-	UpdatedAt     time.Time                     `bson:"updated_at"`
-}
-
-// SeedPermissionKeys fills the catalog from the binary.
-//
-// It inserts what is missing and touches nothing that is there: the catalog is
-// admin-editable (the portal edits a key's description and default action), and a
-// seed that overwrote them would undo that on every deploy.
-//
-// Retiring a key is deliberately *not* this method's job. A seeder runs from
-// whatever binary is deployed, and during a rollback that is an older one — which
-// must not be able to delete a key a newer binary added. Retirements (the SQL set
-// had two: `websearch` and the pre-046 `skill`) are one-off, migration-shaped
-// events.
-func (s *Store) SeedPermissionKeys(keys []nanoprotocol.PermissionKeyDef) (inserted int, err error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	now := time.Now().UTC()
-	for _, k := range keys {
-		if k.ID == "" {
-			continue
-		}
-		update := bson.D{{Key: "$setOnInsert", Value: bson.D{
-			{Key: "description", Value: k.Description},
-			{Key: "default_action", Value: k.DefaultAction},
-			{Key: "read_only", Value: k.ReadOnly},
-			{Key: "updated_at", Value: now},
-		}}}
-		res, err := s.db.Collection(permissionKeysCollection).UpdateOne(ctx,
-			bson.D{{Key: "_id", Value: k.ID}}, update, options.UpdateOne().SetUpsert(true))
-		if err != nil {
-			return inserted, fmt.Errorf("seed permission key %q: %w", k.ID, err)
-		}
-		inserted += int(res.UpsertedCount)
-	}
-	return inserted, nil
-}
-
-func (s *Store) ListPermissionKeys() ([]nanoprotocol.PermissionKeyDef, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	cur, err := s.db.Collection(permissionKeysCollection).Find(ctx, bson.D{},
-		options.Find().SetSort(bson.D{{Key: "_id", Value: 1}}))
-	if err != nil {
-		return nil, fmt.Errorf("list permission keys: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	out := []nanoprotocol.PermissionKeyDef{}
-	for cur.Next(ctx) {
-		var doc storedPermissionKey
-		if err := cur.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("decode permission key: %w", err)
-		}
-		out = append(out, nanoprotocol.PermissionKeyDef{
-			ID: doc.ID, Description: doc.Description,
-			DefaultAction: doc.DefaultAction, ReadOnly: doc.ReadOnly,
-		})
-	}
-	return out, cur.Err()
-}
-
-// readOnlyPermissionKeys returns the catalog's read-only keys mapped to their
-// required default action.
-func (s *Store) readOnlyPermissionKeys() (map[string]nanoprotocol.PermissionAction, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	cur, err := s.db.Collection(permissionKeysCollection).Find(ctx,
-		bson.D{{Key: "read_only", Value: true}})
-	if err != nil {
-		return nil, fmt.Errorf("list read-only permission keys: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	out := map[string]nanoprotocol.PermissionAction{}
-	for cur.Next(ctx) {
-		var doc storedPermissionKey
-		if err := cur.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("decode read-only permission key: %w", err)
-		}
-		out[doc.ID] = doc.DefaultAction
-	}
-	return out, cur.Err()
+// Permission keys are the admin module's collection now. The bus still has to
+// check a policy against the read-only keys, so it asks for them through this
+// provider (wired to the admin client at startup).
+func (s *Store) SetReadOnlyPermissionKeySource(fn func() (map[string]nanoprotocol.PermissionAction, error)) {
+	s.readOnlyKeys = fn
 }
 
 // validateReadOnlyRules rejects a policy that would move a read-only permission
 // key away from its catalog default. The check is on the effective (last-match
-// wins) action, so a wildcard baseline such as "*": deny is also rejected
-// unless the read-only keys are explicitly re-allowed after it.
+// wins) action, so a wildcard baseline such as "*": deny is also rejected unless
+// the read-only keys are explicitly re-allowed after it.
 func (s *Store) validateReadOnlyRules(rules []nanoprotocol.PermissionRule) error {
-	keys, err := s.readOnlyPermissionKeys()
+	if s.readOnlyKeys == nil {
+		return fmt.Errorf("permission key catalog is not configured")
+	}
+	keys, err := s.readOnlyKeys()
 	if err != nil {
 		return err
 	}
@@ -932,8 +843,6 @@ func (s *Store) validateReadOnlyRules(rules []nanoprotocol.PermissionRule) error
 	}
 	return nil
 }
-
-// ======== resolution ========
 
 // AgentTypeForAgent returns the type an agent belongs to (nil if none).
 func (s *Store) AgentTypeForAgent(agentID string) (*nanoprotocol.AgentTypeDef, error) {

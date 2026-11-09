@@ -2,17 +2,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/agenttypes"
 	"gitee.com/kobeyoung81/nanobus/internal/config"
 	buslog "gitee.com/kobeyoung81/nanobus/internal/log"
-	"gitee.com/kobeyoung81/nanobus/internal/permissionkeys"
 	"gitee.com/kobeyoung81/nanobus/internal/promptbundle"
 	"gitee.com/kobeyoung81/nanobus/internal/server"
 	"gitee.com/kobeyoung81/nanobus/internal/skillbundle"
@@ -56,6 +58,25 @@ for gateway and agent connections.`,
 			}
 			defer s.Close()
 
+			// The permission catalog lives in the admin module; the policy checks
+			// in the store ask it through this provider.
+			admin := adminclient.New(cfg.Admin.BaseURL, cfg.InternalToken)
+			s.SetReadOnlyPermissionKeySource(func() (map[string]nanoprotocol.PermissionAction, error) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				keys, err := admin.PermissionKeys(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out := make(map[string]nanoprotocol.PermissionAction, len(keys))
+				for _, k := range keys {
+					if k.ReadOnly {
+						out[k.ID] = k.DefaultAction
+					}
+				}
+				return out, nil
+			})
+
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
 				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
@@ -86,7 +107,6 @@ for gateway and agent connections.`,
 	rootCmd.AddCommand(newUserCmd(&configPath))
 	rootCmd.AddCommand(newSkillsCmd(&configPath))
 	rootCmd.AddCommand(newPromptsCmd(&configPath))
-	rootCmd.AddCommand(newPermissionsCmd(&configPath))
 	rootCmd.AddCommand(newAgentTypesCmd(&configPath))
 	rootCmd.AddCommand(newMcpCmd(&configPath))
 	rootCmd.AddCommand(newMigrateCmd(&configPath))
@@ -292,44 +312,6 @@ unless --force is given. Re-running is safe.`,
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "also overwrite prompts that were edited after seeding")
 	return cmd
-}
-
-func newPermissionsCmd(configPath *string) *cobra.Command {
-	permissionsCmd := &cobra.Command{
-		Use:   "permissions",
-		Short: "Manage the permission key catalog",
-	}
-	permissionsCmd.AddCommand(newPermissionsSeedCmd(configPath))
-	return permissionsCmd
-}
-
-func newPermissionsSeedCmd(configPath *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "seed",
-		Short: "Seed the permission key catalog this binary ships",
-		Long: `Inserts the permission keys the binary knows about, leaving existing ones
-alone: descriptions and default actions are admin-editable in the portal, and
-re-running this on every deploy must not undo those edits. Safe to re-run.
-
-Retiring a key is a separate, deliberate act — an older binary must not be able
-to delete a key a newer one ships — so nothing here removes anything.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore(configPath)
-			if err != nil {
-				return err
-			}
-			defer s.Close()
-
-			keys := permissionkeys.Keys()
-			inserted, err := s.SeedPermissionKeys(keys)
-			if err != nil {
-				return fmt.Errorf("seed permission keys: %w", err)
-			}
-			fmt.Printf("Seeded %d permission key(s) (%d inserted, %d already present).\n",
-				len(keys), inserted, len(keys)-inserted)
-			return nil
-		},
-	}
 }
 
 func newAgentTypesCmd(configPath *string) *cobra.Command {

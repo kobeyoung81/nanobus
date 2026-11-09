@@ -14,7 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"gitee.com/kobeyoung81/nanobus/internal/agenttypes"
-	"gitee.com/kobeyoung81/nanobus/internal/permissionkeys"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
@@ -253,14 +252,9 @@ func TestShippedAgentTypes_SurviveTheirOwnValidation(t *testing.T) {
 		}
 	}
 
-	// And the seeded catalog is the one the portal shows.
-	keys, err := s.ListPermissionKeys()
-	if err != nil {
-		t.Fatalf("ListPermissionKeys: %v", err)
-	}
-	if len(keys) != len(permissionkeys.Keys()) {
-		t.Fatalf("the catalog has %d keys, the binary ships %d", len(keys), len(permissionkeys.Keys()))
-	}
+	// The catalog itself is the admin module's now; its own tests cover seeding
+	// and listing. What matters here is that every shipped definition passes the
+	// read-only validation against it.
 }
 
 // TestSeedAgentTypes_SkipsEmptyIDs keeps a malformed entry out of the catalog.

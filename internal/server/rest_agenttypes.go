@@ -127,18 +127,6 @@ func (s *Server) restDeleteAgentType(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
 
-// ======== admin: permission keys ========
-
-func (s *Server) restListPermissionKeys(w http.ResponseWriter, r *http.Request) {
-	keys, err := s.store.ListPermissionKeys()
-	if err != nil {
-		slog.Error("list permission keys", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	writeJSON(w, http.StatusOK, nanoprotocol.PermissionKeysResponse{Keys: keys})
-}
-
 // ======== user: assignable agent types ========
 
 // restListMyAgentTypes lists the definitions a user may configure. By default

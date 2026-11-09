@@ -28,26 +28,29 @@ func agentTypeFixture(id string, settings map[string]string) nanoprotocol.AgentT
 	return nanoprotocol.AgentTypeDef{ID: id, Name: id, Settings: settings}
 }
 
-// seedPermissionCatalog writes the platform's permission key catalog. It lives in
-// MongoDB now — it used to be a MySQL table, which is why the type domain's tests
-// needed a mocked handle to read it — and it ships in the binary
-// (internal/permissionkeys), so a fresh store is empty until this runs.
+// seedPermissionCatalog wires the permission key catalog the bus reads when it
+// validates a policy. The catalog lives in the admin module now, so the store
+// takes it through a provider rather than a collection.
 func seedPermissionCatalog(t *testing.T, s *store.Store) {
 	t.Helper()
-	if _, err := s.SeedPermissionKeys(permissionkeys.Keys()); err != nil {
-		t.Fatalf("SeedPermissionKeys: %v", err)
-	}
+	s.SetReadOnlyPermissionKeySource(func() (map[string]nanoprotocol.PermissionAction, error) {
+		out := map[string]nanoprotocol.PermissionAction{}
+		for _, k := range permissionkeys.Keys() {
+			if k.ReadOnly {
+				out[k.ID] = k.DefaultAction
+			}
+		}
+		return out, nil
+	})
 }
 
-// seedOnlyReadOnlyKey writes a catalog holding just the given key, for a test
+// seedOnlyReadOnlyKey wires a catalog holding just the given key, for a test
 // that asserts what the validation does with one specific read-only tool.
 func seedOnlyReadOnlyKey(t *testing.T, s *store.Store, id string, action nanoprotocol.PermissionAction) {
 	t.Helper()
-	if _, err := s.SeedPermissionKeys([]nanoprotocol.PermissionKeyDef{
-		{ID: id, Description: "test key", DefaultAction: action, ReadOnly: true},
-	}); err != nil {
-		t.Fatalf("SeedPermissionKeys: %v", err)
-	}
+	s.SetReadOnlyPermissionKeySource(func() (map[string]nanoprotocol.PermissionAction, error) {
+		return map[string]nanoprotocol.PermissionAction{id: action}, nil
+	})
 }
 
 func TestSaveAgentType_RoundTripsTheAggregate(t *testing.T) {
@@ -695,5 +698,20 @@ func TestAgentType_KeepsTheBaselineOutOfSettings(t *testing.T) {
 	}
 	if got.Settings["session_mode"] != "continuous" {
 		t.Fatalf("settings lost: %+v", got.Settings)
+	}
+}
+
+// Without a catalog the bus must refuse the save rather than skip the check: a
+// policy that unlocks a read-only tool would otherwise pass silently whenever
+// the admin module is unreachable.
+func TestSaveAgentTypeFailsClosedWithoutThePermissionCatalog(t *testing.T) {
+	s := storetest.Connect(t)
+
+	err := s.SaveAgentType(nanoprotocol.AgentTypeDef{
+		ID: "no-catalog", Name: "No catalog",
+		Permissions: []nanoprotocol.PermissionRule{{Action: nanoprotocol.PermissionAllow, Pattern: "*"}},
+	})
+	if err == nil {
+		t.Fatal("a save without a permission catalog was accepted")
 	}
 }
