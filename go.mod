@@ -3,7 +3,7 @@ module gitee.com/kobeyoung81/nanobus
 go 1.25.0
 
 require (
-	gitee.com/kobeyoung81/nanoprotocol v0.43.0
+	gitee.com/kobeyoung81/nanoprotocol v0.44.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/spf13/cobra v1.8.1
