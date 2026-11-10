@@ -15,6 +15,7 @@ import (
 	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/middleware"
 	"gitee.com/kobeyoung81/nanobus/internal/portalclient"
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/stream"
 	"github.com/gorilla/websocket"
@@ -29,6 +30,7 @@ type Server struct {
 	nanoauthURL       string
 	admin             *adminclient.Client
 	portal            *portalclient.Client
+	provisioner       *provisionerclient.Client
 	chunks            *stream.ChunkBuffer
 	sse               *sseHub
 	events            *sseHub
@@ -110,6 +112,14 @@ func WithAdminURL(url, token string) ServerOption {
 func WithPortalURL(url, token string) ServerOption {
 	return func(s *Server) {
 		s.portal = portalclient.New(url, token)
+	}
+}
+
+// WithProvisionerURL sets the runner's base URL. The provisioning queue belongs
+// to it now; the console's container actions are forwarded there.
+func WithProvisionerURL(url, token string) ServerOption {
+	return func(s *Server) {
+		s.provisioner = provisionerclient.New(url, token)
 	}
 }
 

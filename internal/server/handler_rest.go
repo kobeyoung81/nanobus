@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
@@ -96,8 +98,8 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// Containers + runners
 	mux.HandleFunc("POST /api/v1/containers", s.restRequestContainer)
 	mux.HandleFunc("GET /api/v1/containers", s.restListContainers)
-	mux.HandleFunc("POST /api/v1/containers/poll", s.restPollPendingContainers)
-	mux.HandleFunc("PUT /api/v1/containers/{id}/status", s.restUpdateContainerStatus)
+	// The queue's poll and status paths are the runner's own: it polls its store
+	// directly now, so nothing needs them here.
 	mux.HandleFunc("POST /api/v1/containers/{id}/dispose", s.restDisposeContainer)
 	mux.HandleFunc("POST /api/v1/containers/{id}/restart", s.restRestartContainer)
 	mux.HandleFunc("POST /api/v1/containers/{id}/reprovision", s.restReprovisionContainer)
@@ -332,9 +334,10 @@ func (s *Server) restRequestContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.CreateContainerRequest(req.UserID, req.BindingID, req.AgentID, req.Level); err != nil {
-		slog.Error("request container", "error", err)
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
+		return c.Enqueue(ctx, req.UserID, req.BindingID, req.AgentID, req.Level)
+	}); err != nil {
+		s.writeProvisionerError(w, err, "request container", req.UserID)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
@@ -364,13 +367,10 @@ func (s *Server) restDisposeContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.DisposeContainerRequest(id, 0); err != nil {
-		slog.Error("dispose container", "id", id, "error", err)
-		if err == store.ErrContainerNotFound {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
+		return c.Dispose(ctx, id)
+	}); err != nil {
+		s.writeProvisionerError(w, err, "dispose container", id)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "disposing"})

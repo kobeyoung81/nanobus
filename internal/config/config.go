@@ -13,6 +13,9 @@ type BusConfig struct {
 	// are the portal's; the two writes this service still receives for them are
 	// forwarded there.
 	Portal PortalConfig `json:"portal" mapstructure:"portal"`
+	// Provisioner is the runner's base URL. The provisioning queue is its; the
+	// console's container actions are forwarded there.
+	Provisioner PortalConfig `json:"provisioner" mapstructure:"provisioner"`
 	// InternalToken is the shared secret the platform's own callers present on
 	// the bus's internal endpoints (NANOSEC_BUS_INTERNAL_TOKEN). It is empty on
 	// a deployment that has not been given one, and the bus then refuses those

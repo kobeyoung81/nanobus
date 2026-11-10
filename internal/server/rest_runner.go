@@ -1,58 +1,21 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
-	"gitee.com/kobeyoung81/nanobus/internal/store"
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
-func (s *Server) restPollPendingContainers(w http.ResponseWriter, r *http.Request) {
-	var req nanoprotocol.PollPendingContainersRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	// Touch runner heartbeat on every poll (mirrors the WebSocket path).
-	if req.RunnerID != "" {
-		_ = s.store.UpdateRunnerHeartbeat(req.RunnerID)
-	}
-
-	requests, err := s.store.PollPendingContainers(req.RunnerID)
-	if err != nil {
-		slog.Error("poll pending containers", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, nanoprotocol.PollPendingContainersResponse{Requests: requests})
-}
-
-func (s *Server) restUpdateContainerStatus(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-
-	var req nanoprotocol.UpdateContainerStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if req.BindingID == 0 && req.UserID == "" {
-		req.BindingID = 0
-		// legacy path: the route id may be a user id
-		req.UserID = id
-	}
-
-	if err := s.store.UpdateContainerStatus(req.UserID, req.BindingID, req.Status); err != nil {
-		slog.Error("update container status", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
-}
+// The provisioning queue belongs to the runner: it polls it and records what
+// happened. The bus keeps the console's paths and forwards the actions, the same
+// shape configuration has (bus → admin). What is left here are the reads the
+// console needs and the runner registry.
 
 func (s *Server) restRestartContainer(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -61,13 +24,10 @@ func (s *Server) restRestartContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.RestartContainerRequest(id); err != nil {
-		slog.Error("restart container", "id", id, "error", err)
-		if err == store.ErrContainerNotFound {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
+		return c.Restart(ctx, id)
+	}); err != nil {
+		s.writeProvisionerError(w, err, "restart container", id)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
@@ -82,13 +42,10 @@ func (s *Server) restReprovisionContainer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := s.store.ReprovisionContainerRequest(id); err != nil {
-		slog.Error("reprovision container", "id", id, "error", err)
-		if err == store.ErrContainerNotFound {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
+		return c.Reprovision(ctx, id)
+	}); err != nil {
+		s.writeProvisionerError(w, err, "reprovision container", id)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
@@ -124,4 +81,29 @@ func (s *Server) restDeleteRunner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+}
+
+// callProvisioner runs one forwarded action against the runner's API.
+func (s *Server) callProvisioner(r *http.Request, fn func(ctx context.Context, c *provisionerclient.Client) error) error {
+	if s.provisioner == nil || !s.provisioner.Enabled() {
+		return fmt.Errorf("the provisioner module is not configured")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	return fn(ctx, s.provisioner)
+}
+
+// writeProvisionerError passes the runner's own status through where it means
+// something (404 for "nothing to act on"), and reports anything else as a gateway
+// failure: the caller asked a service that could not be reached or failed.
+func (s *Server) writeProvisionerError(w http.ResponseWriter, err error, action, id string) {
+	switch provisionerclient.CodeOf(err) {
+	case http.StatusNotFound:
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "container request not found"})
+	case http.StatusConflict:
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "container already requested"})
+	default:
+		slog.Error(action, "id", id, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provisioner unavailable"})
+	}
 }

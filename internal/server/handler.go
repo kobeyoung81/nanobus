@@ -30,11 +30,6 @@ func (s *Server) handleConnection(conn *websocket.Conn) {
 }
 
 func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
-	// Bridge for containers still running the previous runtime image; see
-	// legacy_agents.go.
-	if legacyType(msg.Type) {
-		return s.handleLegacyAgentMessage(msg)
-	}
 	switch msg.Type {
 	case nanoprotocol.TypeResolveUser:
 		return s.handleResolveUser(msg)
@@ -46,16 +41,10 @@ func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
 		return s.handlePostOutbound(msg)
 	case nanoprotocol.TypePollOutbound:
 		return s.handlePollOutbound(msg)
-	case nanoprotocol.TypePollPendingContainers:
-		return s.handlePollPendingContainers(msg)
-	case nanoprotocol.TypeRequestContainer:
-		return s.handleRequestContainer(msg)
+	// The queue's poll/request/status/dispose messages are gone: the runner
+	// polls its own store now. list_containers stays for the console's read.
 	case nanoprotocol.TypeListContainers:
 		return s.handleListContainers(msg)
-	case nanoprotocol.TypeUpdateContainerStatus:
-		return s.handleUpdateContainerStatus(msg)
-	case nanoprotocol.TypeDisposeContainer:
-		return s.handleDisposeContainer(msg)
 	case nanoprotocol.TypeRegisterRunner:
 		return s.handleRegisterRunner(msg)
 	case nanoprotocol.TypeValidateToken:
@@ -227,55 +216,6 @@ func (s *Server) handlePollOutbound(msg nanoprotocol.Message) *nanoprotocol.Mess
 	return &resp
 }
 
-func (s *Server) handlePollPendingContainers(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.PollPendingContainersRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	// Touch runner heartbeat on every poll.
-	if req.RunnerID != "" {
-		_ = s.store.UpdateRunnerHeartbeat(req.RunnerID)
-	}
-
-	requests, err := s.store.PollPendingContainers(req.RunnerID)
-	if err != nil {
-		slog.Error("poll pending containers failed", "error", err)
-		resp := nanoprotocol.NewErrorMessage("poll pending containers: " + err.Error())
-		return &resp
-	}
-
-	slog.Debug("polled pending containers", "runner_id", req.RunnerID, "count", len(requests))
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypePendingContainers, nanoprotocol.PollPendingContainersResponse{
-		Requests: requests,
-	})
-	return &resp
-}
-
-func (s *Server) handleRequestContainer(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.RequestContainerRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	if req.UserID == "" {
-		resp := nanoprotocol.NewErrorMessage("user_id is required")
-		return &resp
-	}
-
-	if err := s.store.CreateContainerRequest(req.UserID, req.BindingID, req.AgentID, req.Level); err != nil {
-		slog.Error("request container failed", "user_id", req.UserID, "agent_id", req.AgentID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("request container: " + err.Error())
-		return &resp
-	}
-
-	slog.Info("container requested", "user_id", req.UserID, "agent_id", req.AgentID, "level", req.Level)
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeContainerRequested, req)
-	return &resp
-}
-
 func (s *Server) handleListContainers(msg nanoprotocol.Message) *nanoprotocol.Message {
 	var req nanoprotocol.ListContainersRequest
 	if err := msg.DecodePayload(&req); err != nil {
@@ -293,47 +233,6 @@ func (s *Server) handleListContainers(msg nanoprotocol.Message) *nanoprotocol.Me
 	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeContainersListed, nanoprotocol.ListContainersResponse{
 		Requests: requests,
 	})
-	return &resp
-}
-
-func (s *Server) handleUpdateContainerStatus(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.UpdateContainerStatusRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	if err := s.store.UpdateContainerStatus(req.UserID, req.BindingID, req.Status); err != nil {
-		slog.Error("update container status failed", "user_id", req.UserID, "binding_id", req.BindingID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("update container status: " + err.Error())
-		return &resp
-	}
-
-	slog.Debug("updated container status", "user_id", req.UserID, "binding_id", req.BindingID, "status", req.Status)
-	resp := nanoprotocol.Message{Type: "ok"}
-	return &resp
-}
-
-func (s *Server) handleDisposeContainer(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.DisposeContainerRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	if req.UserID == "" {
-		resp := nanoprotocol.NewErrorMessage("user_id is required")
-		return &resp
-	}
-
-	if err := s.store.DisposeContainerRequest(req.UserID, req.BindingID); err != nil {
-		slog.Error("dispose container failed", "user_id", req.UserID, "binding_id", req.BindingID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("dispose container: " + err.Error())
-		return &resp
-	}
-
-	slog.Info("container disposal requested", "user_id", req.UserID, "binding_id", req.BindingID, "agent_id", req.AgentID)
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeContainerDisposed, req)
 	return &resp
 }
 

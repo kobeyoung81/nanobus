@@ -48,6 +48,7 @@ func LoadBusConfig(path string) (BusConfig, error) {
 		"nanoauth.base_url",
 		"admin.base_url",
 		"portal.base_url",
+		"provisioner.base_url",
 		"internal_token",
 	} {
 		v.BindEnv(key)
@@ -73,6 +74,7 @@ func LoadBusConfig(path string) (BusConfig, error) {
 	// paths, and an empty value is meaningful: it refuses every config write.
 	cfg.Admin.BaseURL = strings.TrimRight(v.GetString("admin.base_url"), "/")
 	cfg.Portal.BaseURL = strings.TrimRight(v.GetString("portal.base_url"), "/")
+	cfg.Provisioner.BaseURL = strings.TrimRight(v.GetString("provisioner.base_url"), "/")
 	cfg.InternalToken = strings.TrimSpace(v.GetString("internal_token"))
 	return cfg, nil
 }

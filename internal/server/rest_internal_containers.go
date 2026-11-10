@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 )
 
 // restInternalContainerRequest enqueues a pending provisioning request.
@@ -26,9 +29,11 @@ func (s *Server) restInternalContainerRequest(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := s.store.EnsureContainerRequest(body.UserID, body.AgentID); err != nil {
+	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
+		return c.EnqueueForAgent(ctx, body.UserID, body.AgentID)
+	}); err != nil {
 		slog.Error("enqueue container request", "user_id", body.UserID, "agent_id", body.AgentID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provisioner unavailable"})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "requested"})
