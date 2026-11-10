@@ -128,6 +128,10 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/containers/{id}/reprovision", s.restReprovisionContainer)
 	mux.HandleFunc("POST /api/v1/runners/register", s.restRegisterRunner)
 	// The fleet view and the runtime snapshot, for the portal.
+	// Internal: the admin module owns the type catalogue and asks this service
+	// (the owner of the agent rows) to clear the references before it deletes a
+	// type. Guarded like every other internal route.
+	mux.HandleFunc("POST /api/v1/internal/agent-types/{id}/clear-refs", s.restClearAgentTypeRefs)
 	mux.HandleFunc("GET /api/v1/runners", s.restListRunners)
 	mux.HandleFunc("GET /api/v1/runners/counts", s.restCountRunners)
 	// The console's own view of the same collection: it may omit the user (the
