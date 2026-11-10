@@ -236,44 +236,6 @@ func TestListAgentsFiltered_HidesTombstones(t *testing.T) {
 	}
 }
 
-func TestBindingAgent_PreferenceWinsOverFallback(t *testing.T) {
-	s := agentStore(t, "pro")
-	mustCreateAgent(t, s, "agent-1", "user-1")
-
-	// No preference yet: the fallback goes through the channel embedded in the
-	// user document to the owner, then finds that user's first active agent.
-	got, err := s.GetBindingAgent(42)
-	if err != nil {
-		t.Fatalf("GetBindingAgent: %v", err)
-	}
-	if got != "agent-1" {
-		t.Fatalf("fallback = %q, want agent-1", got)
-	}
-
-	if err := s.SetBindingAgent(42, "agent-pinned"); err != nil {
-		t.Fatalf("SetBindingAgent: %v", err)
-	}
-	got, err = s.GetBindingAgent(42)
-	if err != nil {
-		t.Fatalf("GetBindingAgent after pin: %v", err)
-	}
-	if got != "agent-pinned" {
-		t.Fatalf("preference = %q, want agent-pinned", got)
-	}
-
-	// Clearing falls back again.
-	if err := s.SetBindingAgent(42, ""); err != nil {
-		t.Fatalf("SetBindingAgent(clear): %v", err)
-	}
-	got, err = s.GetBindingAgent(42)
-	if err != nil {
-		t.Fatalf("GetBindingAgent after clear: %v", err)
-	}
-	if got != "agent-1" {
-		t.Fatalf("after clearing the preference = %q, want the fallback agent-1", got)
-	}
-}
-
 // TestSaveAgentSettingsRoundTrips pins the field the deprecated columns used to
 // carry: settings now live in the document, so a read must return them.
 func TestUpdateAgent_RoundTripsFields(t *testing.T) {

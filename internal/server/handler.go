@@ -79,10 +79,6 @@ func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
 		return s.handleListAgentTypes(msg)
 	case nanoprotocol.TypeSetAgentPermission:
 		return s.handleSetAgentPermission(msg)
-	case nanoprotocol.TypeGetBindingAgent:
-		return s.handleGetBindingAgent(msg)
-	case nanoprotocol.TypeSetBindingAgent:
-		return s.handleSetBindingAgent(msg)
 	default:
 		resp := nanoprotocol.NewErrorMessage("unknown message type: " + msg.Type)
 		return &resp
@@ -464,46 +460,6 @@ func (s *Server) handleRegisterRunner(msg nanoprotocol.Message) *nanoprotocol.Me
 	slog.Info("runner registered", "runner_id", req.RunnerID, "hostname", req.Hostname)
 	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeRunnerRegistered, nanoprotocol.RegisterRunnerResponse{
 		RunnerID: req.RunnerID,
-	})
-	return &resp
-}
-
-func (s *Server) handleGetBindingAgent(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.GetBindingAgentRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	agentID, err := s.store.GetBindingAgent(req.BindingID)
-	if err != nil {
-		slog.Error("get binding agent failed", "binding_id", req.BindingID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("get binding agent: " + err.Error())
-		return &resp
-	}
-
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeBindingAgent, nanoprotocol.GetBindingAgentResponse{
-		AgentID: agentID,
-	})
-	return &resp
-}
-
-func (s *Server) handleSetBindingAgent(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.SetBindingAgentRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	if err := s.store.SetBindingAgent(req.BindingID, req.AgentID); err != nil {
-		slog.Error("set binding agent failed", "binding_id", req.BindingID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("set binding agent: " + err.Error())
-		return &resp
-	}
-
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeBindingAgentSet, nanoprotocol.SetBindingAgentResponse{
-		BindingID: req.BindingID,
-		AgentID:   req.AgentID,
 	})
 	return &resp
 }
