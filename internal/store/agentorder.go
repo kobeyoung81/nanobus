@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
@@ -62,63 +61,6 @@ func (s *Store) ListAgentOrder(userID string) (map[string][]string, []string, er
 		}
 	}
 	return groups, ungrouped, cur.Err()
-}
-
-// ArrangeAgents writes the sidebar's order in one round trip: each listed agent
-// gets its group (or none) and its index within that group.
-//
-// Every id must name an agent and a group owned by userID, and no agent may
-// appear twice. Ids omitted from the request keep their previous values, which
-// makes a single "move to group" (the menu's path) a one-agent request.
-func (s *Store) ArrangeAgents(userID string, groups map[string][]string, ungrouped []string) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	ownedAgents, err := s.ownedAgentIDs(ctx, userID)
-	if err != nil {
-		return err
-	}
-	ownedGroups, err := s.ownedGroupIDs(ctx, userID)
-	if err != nil {
-		return err
-	}
-
-	seen := make(map[string]bool, len(ungrouped))
-	models := make([]mongo.WriteModel, 0, len(ungrouped))
-	for groupID, ids := range groups {
-		if !ownedGroups[groupID] {
-			return fmt.Errorf("%w: unknown group %q", ErrAgentOrderInvalid, groupID)
-		}
-		for position, id := range ids {
-			if err := claimAgent(seen, ownedAgents, id); err != nil {
-				return err
-			}
-			models = append(models, mongo.NewUpdateOneModel().
-				SetFilter(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: userID}}).
-				SetUpdate(bson.D{{Key: "$set", Value: bson.D{
-					{Key: "group_id", Value: groupID},
-					{Key: "position", Value: int64(position)},
-				}}}))
-		}
-	}
-	for position, id := range ungrouped {
-		if err := claimAgent(seen, ownedAgents, id); err != nil {
-			return err
-		}
-		models = append(models, mongo.NewUpdateOneModel().
-			SetFilter(bson.D{{Key: "_id", Value: id}, {Key: "user_id", Value: userID}}).
-			SetUpdate(bson.D{
-				{Key: "$unset", Value: bson.D{{Key: "group_id", Value: ""}}},
-				{Key: "$set", Value: bson.D{{Key: "position", Value: int64(position)}}},
-			}))
-	}
-	if len(models) == 0 {
-		return nil
-	}
-	if _, err := s.db.Collection(agentsCollection).BulkWrite(ctx, models); err != nil {
-		return fmt.Errorf("arrange agents: %w", err)
-	}
-	return nil
 }
 
 // claimAgent records that id is being arranged and reports whether it belongs

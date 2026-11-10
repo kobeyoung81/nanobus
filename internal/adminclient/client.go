@@ -6,9 +6,11 @@
 package adminclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,6 +39,87 @@ func New(baseURL, token string) *Client {
 
 // Enabled reports whether a base URL was configured.
 func (c *Client) Enabled() bool { return c != nil && c.baseURL != "" }
+
+// do sends the request and decodes a successful body into out.
+func (c *Client) do(req *http.Request, out any) error {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("call admin %s: %w", req.URL.Path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("call admin %s: status %d: %s", req.URL.Path, resp.StatusCode, bytes.TrimSpace(detail))
+	}
+	if out == nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// GetJSON reads one admin endpoint into out.
+func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
+	if !c.Enabled() {
+		return fmt.Errorf("admin module is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	return c.do(req, out)
+}
+
+// PutJSONPath posts a body to an internal admin endpoint (the methods differ per
+// endpoint; this one is a POST with a JSON body).
+func (c *Client) PutJSONPath(ctx context.Context, path string, body []byte) (int, error) {
+	if !c.Enabled() {
+		return 0, fmt.Errorf("admin module is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return resp.StatusCode, fmt.Errorf("call admin %s: status %d: %s", path, resp.StatusCode, bytes.TrimSpace(detail))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
+
+// PutJSON sends a JSON body and reports the status, so a caller can pass the
+// admin module's own verdict through instead of flattening it.
+func (c *Client) PutJSON(ctx context.Context, path string, body []byte) (int, error) {
+	if !c.Enabled() {
+		return 0, fmt.Errorf("admin module is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return resp.StatusCode, fmt.Errorf("call admin %s: status %d: %s", path, resp.StatusCode, bytes.TrimSpace(detail))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
 
 // PermissionKeys returns the permission key catalog.
 //

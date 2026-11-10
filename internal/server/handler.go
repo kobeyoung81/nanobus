@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanoprotocol"
@@ -429,7 +431,20 @@ func (s *Server) handleBuiltinToolsSync(msg nanoprotocol.Message) *nanoprotocol.
 		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
 		return &resp
 	}
-	if err := s.store.SyncBuiltinTools(req.Tools); err != nil {
+	// The catalogue is the admin module's; the runtime keeps announcing through
+	// the protocol it knows and this service forwards the announcement.
+	payload, err := json.Marshal(map[string]any{"tools": req.Tools})
+	if err != nil {
+		resp := nanoprotocol.NewErrorMessage("sync builtin tools: " + err.Error())
+		return &resp
+	}
+	if s.admin == nil || !s.admin.Enabled() {
+		resp := nanoprotocol.NewErrorMessage("sync builtin tools: the admin module is not configured")
+		return &resp
+	}
+	syncCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := s.admin.PutJSONPath(syncCtx, "/api/v1/internal/builtin-tools/sync", payload); err != nil {
 		slog.Error("builtin tools sync failed", "count", len(req.Tools), "error", err)
 		resp := nanoprotocol.NewErrorMessage("sync builtin tools: " + err.Error())
 		return &resp

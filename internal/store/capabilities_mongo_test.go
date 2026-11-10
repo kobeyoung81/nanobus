@@ -15,7 +15,6 @@ import (
 	"gitee.com/kobeyoung81/nanobus/internal/agenttypes"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
-	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
 func mcpFixture(id, scope, owner, name string) store.McpServerRecord {
@@ -42,106 +41,6 @@ func skillFixture(id, scope, owner, name string) store.SkillRecord {
 }
 
 // ======== builtin tools ========
-
-func TestSyncBuiltinTools_InsertsWithTheDeclaredDefault(t *testing.T) {
-	s := storetest.Connect(t)
-
-	// The declared default is what a first insert takes — never an assumption that
-	// a tool is on. `parallel_execution` announces nothing, which is how a tool the
-	// binary has just grown arrives switched off: every type that should have it
-	// says so explicitly, so a new tool is opt-in rather than silently available
-	// to every agent and subagent the moment it is compiled in.
-	if err := s.SyncBuiltinTools([]nanoprotocol.BuiltinToolDef{
-		{ID: "shell", Description: "run a command", Parameters: []byte(`{"type":"object"}`), DefaultEnabled: true},
-		{ID: "read", Description: "read a file"},
-		{ID: "parallel_execution"},
-	}); err != nil {
-		t.Fatalf("SyncBuiltinTools: %v", err)
-	}
-
-	tools, err := s.ListBuiltinTools()
-	if err != nil {
-		t.Fatalf("ListBuiltinTools: %v", err)
-	}
-	if len(tools) != 3 {
-		t.Fatalf("expected 3 tools, got %+v", tools)
-	}
-	// Ordered by id: parallel_execution, read, shell.
-	if tools[0].ID != "parallel_execution" || tools[2].ID != "shell" {
-		t.Fatalf("expected [parallel_execution read shell], got %+v", tools)
-	}
-	if tools[0].DefaultEnabled || tools[1].DefaultEnabled {
-		t.Fatalf("a tool that declared no default arrived enabled: %+v", tools)
-	}
-	if !tools[2].DefaultEnabled || tools[2].Locked != "" {
-		t.Fatalf("unexpected first-insert state: %+v", tools[2])
-	}
-	if string(tools[2].Parameters) != `{"type":"object"}` {
-		t.Fatalf("parameters did not round trip: %s", tools[2].Parameters)
-	}
-}
-
-// TestSyncBuiltinTools_KeepsAdminState is the whole point of the two-plane split:
-// the binary owns definitions, the admin owns state, and a restart must not undo
-// a decision.
-func TestSyncBuiltinTools_KeepsAdminState(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.SyncBuiltinTools([]nanoprotocol.BuiltinToolDef{{ID: "shell", Description: "old"}}); err != nil {
-		t.Fatalf("first sync: %v", err)
-	}
-	off := false
-	if err := s.UpdateBuiltinState("shell", &off, nil); err != nil {
-		t.Fatalf("UpdateBuiltinState: %v", err)
-	}
-
-	// A redeploy reports the tool again, with new text.
-	if err := s.SyncBuiltinTools([]nanoprotocol.BuiltinToolDef{{ID: "shell", Description: "new"}}); err != nil {
-		t.Fatalf("second sync: %v", err)
-	}
-
-	tools, err := s.ListBuiltinTools()
-	if err != nil {
-		t.Fatalf("ListBuiltinTools: %v", err)
-	}
-	if tools[0].Description != "new" {
-		t.Fatalf("the definition was not refreshed: %+v", tools[0])
-	}
-	if tools[0].DefaultEnabled {
-		t.Fatalf("the admin's state was overwritten: %+v", tools[0])
-	}
-}
-
-// TestUpdateBuiltinState_OnlyTouchesNamedFields: the SQL read the row and merged
-// in Go; the store now writes what the caller named and nothing else.
-func TestUpdateBuiltinState_OnlyTouchesNamedFields(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.SyncBuiltinTools([]nanoprotocol.BuiltinToolDef{
-		{ID: "shell", Description: "d", DefaultEnabled: true},
-	}); err != nil {
-		t.Fatalf("sync: %v", err)
-	}
-	locked := "on"
-	if err := s.UpdateBuiltinState("shell", nil, &locked); err != nil {
-		t.Fatalf("UpdateBuiltinState: %v", err)
-	}
-
-	tools, err := s.ListBuiltinTools()
-	if err != nil {
-		t.Fatalf("ListBuiltinTools: %v", err)
-	}
-	if tools[0].Locked != "on" || !tools[0].DefaultEnabled {
-		t.Fatalf("unexpected state: %+v", tools[0])
-	}
-	if tools[0].Description != "d" {
-		t.Fatalf("the definition moved: %+v", tools[0])
-	}
-
-	if err := s.UpdateBuiltinState("ghost", nil, &locked); err == nil {
-		t.Fatal("expected an error for an unknown tool")
-	}
-}
 
 // ======== mcp servers ========
 
@@ -569,9 +468,7 @@ func TestUserSecret_IdentityIsUnique(t *testing.T) {
 func TestCapabilityVisible(t *testing.T) {
 	s := storetest.Connect(t)
 
-	if err := s.SyncBuiltinTools([]nanoprotocol.BuiltinToolDef{{ID: "shell"}}); err != nil {
-		t.Fatalf("SyncBuiltinTools: %v", err)
-	}
+	seedBuiltinTool(t, s, "shell")
 	if err := s.CreateMcp(mcpFixture("mcp:mine", "user", "u-1", "Mine")); err != nil {
 		t.Fatalf("CreateMcp: %v", err)
 	}
@@ -599,92 +496,6 @@ func TestCapabilityVisible(t *testing.T) {
 		if got != c.want {
 			t.Fatalf("CapabilityVisible(%s, %s, %s) = %v, want %v", c.kind, c.ref, c.user, got, c.want)
 		}
-	}
-}
-
-// TestSyncBuiltinTools_CompletesTheRestrictedBelts is the fresh-install guard for
-// O-32: a role whose belt is a decision about every catalog entry must not end up
-// inheriting the ones nobody decided about.
-//
-// "Absent means the catalog default", and the catalog default is on — that is how
-// a read-only explorer got the write path, and migrations 080/081 repaired it by
-// hand in SQL. With the catalog arriving at runtime, the decisions have to be
-// written when the catalog does.
-func TestSyncBuiltinTools_CompletesTheRestrictedBelts(t *testing.T) {
-	s := storetest.Connect(t)
-	if _, err := s.SeedAgentTypes(agenttypes.Definitions()); err != nil {
-		t.Fatalf("SeedAgentTypes: %v", err)
-	}
-
-	catalog := []nanoprotocol.BuiltinToolDef{
-		{ID: "read", DefaultEnabled: true}, {ID: "grep"}, {ID: "glob"}, {ID: "list"},
-		{ID: "webfetch"}, {ID: "load_skill"}, {ID: "readonly_bash"}, {ID: "parallel_execution"},
-		{ID: "bash"}, {ID: "write"}, {ID: "edit"}, {ID: "cron"}, {ID: "task"}, {ID: "todowrite"},
-	}
-	if err := s.SyncBuiltinTools(catalog); err != nil {
-		t.Fatalf("SyncBuiltinTools: %v", err)
-	}
-
-	for _, belt := range agenttypes.CompleteBelts() {
-		def, err := s.GetAgentType(belt.TypeID)
-		if err != nil {
-			t.Fatalf("GetAgentType(%s): %v", belt.TypeID, err)
-		}
-		decided := map[string]bool{}
-		for _, c := range def.Capabilities {
-			if string(c.Kind) == "builtin_tool" {
-				decided[c.Ref] = c.DefaultEnabled
-			}
-		}
-		for _, tool := range catalog {
-			enabled, ok := decided[tool.ID]
-			if !ok {
-				t.Fatalf("%s has no decision about %s: %+v", belt.TypeID, tool.ID, def.Capabilities)
-			}
-			if enabled != belt.Allows("builtin_tool", tool.ID) {
-				t.Fatalf("%s: %s = %v, want %v", belt.TypeID, tool.ID, enabled, belt.Allows("builtin_tool", tool.ID))
-			}
-		}
-	}
-}
-
-// TestSyncBuiltinTools_KeepsAnAdminsCapabilityEdit: the completion only ever
-// fills gaps. A row that exists is the admin's, including one they switched on
-// against the belt — and one they deleted comes back, because "every entry has a
-// decision" is the contract for these three roles.
-func TestSyncBuiltinTools_KeepsAnAdminsCapabilityEdit(t *testing.T) {
-	s := storetest.Connect(t)
-	if _, err := s.SeedAgentTypes(agenttypes.Definitions()); err != nil {
-		t.Fatalf("SeedAgentTypes: %v", err)
-	}
-	catalog := []nanoprotocol.BuiltinToolDef{{ID: "read"}, {ID: "write"}, {ID: "edit"}}
-	if err := s.SyncBuiltinTools(catalog); err != nil {
-		t.Fatalf("first sync: %v", err)
-	}
-
-	if err := s.SetTypeCapabilityState("role_explore", "builtin_tool", "write", true, ""); err != nil {
-		t.Fatalf("SetTypeCapabilityState: %v", err)
-	}
-	if err := s.DeleteTypeCapabilityState("role_explore", "builtin_tool", "edit"); err != nil {
-		t.Fatalf("DeleteTypeCapabilityState: %v", err)
-	}
-
-	if err := s.SyncBuiltinTools(catalog); err != nil {
-		t.Fatalf("second sync: %v", err)
-	}
-	def, err := s.GetAgentType("role_explore")
-	if err != nil {
-		t.Fatalf("GetAgentType: %v", err)
-	}
-	decided := map[string]bool{}
-	for _, c := range def.Capabilities {
-		decided[c.Ref] = c.DefaultEnabled
-	}
-	if !decided["write"] {
-		t.Fatalf("the admin's edit was overwritten: %+v", def.Capabilities)
-	}
-	if _, ok := decided["edit"]; !ok {
-		t.Fatalf("a deleted decision was not restored: %+v", def.Capabilities)
 	}
 }
 
@@ -718,5 +529,16 @@ func TestCreateMcp_CompletesTheRestrictedBelts(t *testing.T) {
 		if !found {
 			t.Fatalf("%s has no decision about the new MCP server: %+v", belt.TypeID, def.Capabilities)
 		}
+	}
+}
+
+// seedBuiltinTool writes a catalogue row directly: announcing definitions is the
+// admin module's write now, and this test only needs the row to exist.
+func seedBuiltinTool(t *testing.T, s *store.Store, id string) {
+	t.Helper()
+	if _, err := s.DB().Collection("admin_builtin_tools").InsertOne(context.Background(), bson.D{
+		{Key: "_id", Value: id}, {Key: "description", Value: ""}, {Key: "default_enabled", Value: true},
+	}); err != nil {
+		t.Fatalf("seed builtin tool %s: %v", id, err)
 	}
 }

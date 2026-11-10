@@ -1,13 +1,9 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
-	"time"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
@@ -90,55 +86,6 @@ func ValidAgentSettingValue(key, value string) bool {
 		return value == "build" || value == "plan"
 	}
 	return false
-}
-
-// SetAgentSettings replaces an agent's runtime override map, as documented on
-// UpdateAgentRequest.Settings. An empty (or all-empty) map clears the column.
-// Keys outside AgentSettingKeys, or values a key does not accept, are refused
-// with ErrUnsupportedAgentSetting so the caller can answer 400.
-func (s *Store) SetAgentSettings(agentID string, settings map[string]string) error {
-	cleaned := map[string]string{}
-	for k, v := range settings {
-		if !ValidAgentSettingValue(k, v) {
-			return fmt.Errorf("%w: %s=%q", ErrUnsupportedAgentSetting, k, v)
-		}
-		if v != "" {
-			cleaned[k] = v
-		}
-	}
-	var payload string
-	if len(cleaned) > 0 {
-		b, err := json.Marshal(cleaned)
-		if err != nil {
-			return fmt.Errorf("marshal agent settings: %w", err)
-		}
-		payload = string(b)
-	}
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// The settings belong to the agent document, which lives in MongoDB.
-	// Stored as an object rather than the SQL text column: a settings map is
-	// what the document holds, and an empty map is a cleared setting.
-	set := bson.D{{Key: "settings", Value: bson.D{}}}
-	if payload != "" {
-		var parsed map[string]string
-		if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
-			return fmt.Errorf("set agent settings: %w", err)
-		}
-		set = bson.D{{Key: "settings", Value: parsed}}
-	}
-	set = append(set, bson.E{Key: "updated_at", Value: time.Now().UTC()})
-
-	res, err := s.db.Collection(agentsCollection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: agentID}}, bson.D{{Key: "$set", Value: set}})
-	if err != nil {
-		return fmt.Errorf("set agent settings: %w", err)
-	}
-	if res.MatchedCount == 0 {
-		return ErrAgentNotFound
-	}
-	return nil
 }
 
 // agentSettingToConfigKey maps a settings key to the flat runtime config key

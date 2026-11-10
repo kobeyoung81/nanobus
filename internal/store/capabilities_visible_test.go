@@ -7,12 +7,28 @@ package store_test
 // never turn up in someone else's catalog.
 
 import (
+	"context"
 	"testing"
+	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
-	"gitee.com/kobeyoung81/nanoprotocol"
 )
+
+// seedAgentDoc writes the row the resolution reads; creating an agent is the
+// portal's operation now.
+func seedAgentDoc(t *testing.T, s *store.Store, id, userID, typeID string) {
+	t.Helper()
+	if _, err := s.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
+		{Key: "_id", Value: id}, {Key: "user_id", Value: userID}, {Key: "type_id", Value: typeID},
+		{Key: "display_name", Value: id}, {Key: "status", Value: "running"},
+		{Key: "created_at", Value: time.Now().UTC()}, {Key: "updated_at", Value: time.Now().UTC()},
+	}); err != nil {
+		t.Fatalf("seed agent %s: %v", id, err)
+	}
+}
 
 func TestResolveCapabilities_VisibleSkipsOtherUsers(t *testing.T) {
 	// The type domain is in MongoDB too, and a user's catalog is resolved against
@@ -25,14 +41,8 @@ func TestResolveCapabilities_VisibleSkipsOtherUsers(t *testing.T) {
 		t.Fatalf("SaveAgentType: %v", err)
 	}
 
-	if err := s.CreateAgent(store.AgentRecord{
-		ID: "agent-1", UserID: "u-1", TypeID: "build", DisplayName: "agent-1",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
-	if err := s.SyncBuiltinTools([]nanoprotocol.BuiltinToolDef{{ID: "shell", Description: "sh"}}); err != nil {
-		t.Fatalf("SyncBuiltinTools: %v", err)
-	}
+	seedAgentDoc(t, s, "agent-1", "u-1", "build")
+	seedBuiltinTool(t, s, "shell")
 
 	for _, rec := range []store.McpServerRecord{
 		mcpFixture("mcp:global", "platform", "", "global"),
@@ -95,11 +105,7 @@ func TestResolveCapabilities_VisibleSkipsOtherUsers(t *testing.T) {
 func TestResolveCapabilities_SkillUpdateAvailability(t *testing.T) {
 	s := storetest.Connect(t)
 	storetest.SeedUser(t, s, "u-1", "pro", 1)
-	if err := s.CreateAgent(store.AgentRecord{
-		ID: "agent-1", UserID: "u-1", TypeID: "build", DisplayName: "agent-1",
-	}); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
+	seedAgentDoc(t, s, "agent-1", "u-1", "build")
 
 	id := store.BundledSkillID("weather")
 	if err := s.CreateSkill(store.SkillRecord{

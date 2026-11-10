@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -83,27 +84,42 @@ type builtinStateBody struct {
 	Locked         *string `json:"locked"`
 }
 
+// restListBuiltin forwards to the catalogue's owner: the builtin tools moved to
+// the admin module with the rest of the definition plane.
 func (s *Server) restListBuiltin(w http.ResponseWriter, r *http.Request) {
-	tools, err := s.store.ListBuiltinTools()
-	if err != nil {
-		slog.Error("list builtin tools", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	if s.admin == nil || !s.admin.Enabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "admin module is not configured"})
 		return
 	}
-	tools = nonNilSlice(tools)
-	writeJSON(w, http.StatusOK, map[string]any{"tools": tools, "count": len(tools)})
+	var out json.RawMessage
+	if err := s.admin.GetJSON(r.Context(), "/api/v1/capabilities/builtin", &out); err != nil {
+		slog.Error("list builtin tools", "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "admin unavailable"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(out)
 }
 
 func (s *Server) restUpdateBuiltin(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var body builtinStateBody
+	var body json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if err := s.store.UpdateBuiltinState(id, body.DefaultEnabled, body.Locked); err != nil {
+	if s.admin == nil || !s.admin.Enabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "admin module is not configured"})
+		return
+	}
+	status, err := s.admin.PutJSON(r.Context(), "/api/v1/capabilities/builtin/"+url.PathEscape(id), body)
+	if err != nil {
 		slog.Error("update builtin tool", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "admin unavailable"})
+		return
+	}
+	if status >= http.StatusBadRequest {
+		writeJSON(w, status, map[string]string{"error": "admin rejected the update"})
 		return
 	}
 	s.emitCapabilitiesChanged("builtin")
