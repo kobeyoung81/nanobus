@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
@@ -165,7 +167,6 @@ func TestListAudit_Empty(t *testing.T) {
 	}
 }
 
-
 func TestMigrations_DeclareAuditIndexes(t *testing.T) {
 	s := storetest.Connect(t)
 
@@ -294,5 +295,53 @@ func TestListAudit_ResolvesActorNames(t *testing.T) {
 	// outlives the account.
 	if names["ghost"] != "" {
 		t.Fatalf("expected no name for an unknown actor, got %q", names["ghost"])
+	}
+}
+
+// TestRecordAudit_HealsACounterThatIsBehind pins the repair path for the failure
+// P1 left behind: the audit collection was renamed (`audit_log` →
+// `admin_audit_log`), the counter is keyed by name, so the new counter started
+// again at 1 while the migrated rows kept their ids. Every insert then collided
+// and, because audit writes are best-effort, nobody noticed.
+func TestRecordAudit_HealsACounterThatIsBehind(t *testing.T) {
+	s := storetest.Connect(t)
+	ctx := context.Background()
+
+	// Rows that already exist, and a counter that only knows about one of them.
+	for _, id := range []int64{1, 2, 3} {
+		if _, err := s.DB().Collection("admin_audit_log").InsertOne(ctx, bson.D{
+			{Key: "_id", Value: id}, {Key: "action", Value: "legacy"}, {Key: "created_at", Value: time.Now().UTC()},
+		}); err != nil {
+			t.Fatalf("seed row %d: %v", id, err)
+		}
+	}
+	if _, err := s.DB().Collection("sys_counters").UpdateOne(ctx,
+		bson.D{{Key: "_id", Value: "admin_audit_log"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "seq", Value: int64(1)}}}},
+		options.UpdateOne().SetUpsert(true),
+	); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+
+	if err := s.RecordAudit(store.AuditEntry{
+		ActorID: "alice", ActorRole: "admin", Action: "agent.create",
+		ResourceType: "agent", ResourceID: "agent-1",
+	}); err != nil {
+		t.Fatalf("RecordAudit must repair the counter and succeed: %v", err)
+	}
+
+	var doc struct {
+		ID int64 `bson:"_id"`
+	}
+	if err := s.DB().Collection("admin_audit_log").FindOne(ctx,
+		bson.D{{Key: "action", Value: "agent.create"}}).Decode(&doc); err != nil {
+		t.Fatalf("read the new entry: %v", err)
+	}
+	if doc.ID != 4 {
+		t.Fatalf("new entry id = %d, want 4 (one past the highest stored row)", doc.ID)
+	}
+	// The counter must now be past the data, so the next write is not a repair.
+	if err := s.RecordAudit(store.AuditEntry{ActorID: "alice", ActorRole: "admin", Action: "agent.delete", ResourceType: "agent"}); err != nil {
+		t.Fatalf("second write: %v", err)
 	}
 }

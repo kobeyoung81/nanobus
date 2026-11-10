@@ -99,6 +99,18 @@ func (s *Store) RecordAudit(entry AuditEntry) error {
 	}
 	// An unencodable detail surfaces here rather than from a separate json.Marshal.
 	if _, err := s.auditLog().InsertOne(ctx, doc); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			// The counter is behind the rows (see resyncSequence). Repair it from
+			// the data and try once; a second collision is reported.
+			if rerr := s.resyncSequence(ctx, auditLogCollection, auditLogCollection); rerr == nil {
+				if next, nerr := s.nextSequence(ctx, auditLogCollection); nerr == nil {
+					doc.ID = next
+					if _, retryErr := s.auditLog().InsertOne(ctx, doc); retryErr == nil {
+						return nil
+					}
+				}
+			}
+		}
 		return fmt.Errorf("insert audit entry: %w", err)
 	}
 	return nil
