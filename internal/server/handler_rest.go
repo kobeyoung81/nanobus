@@ -132,6 +132,8 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// (the owner of the agent rows) to clear the references before it deletes a
 	// type. Guarded like every other internal route.
 	mux.HandleFunc("POST /api/v1/internal/agent-types/{id}/clear-refs", s.restClearAgentTypeRefs)
+	// The portal owns the agent rows; the provisioning queue is still here.
+	mux.HandleFunc("POST /api/v1/internal/container-requests", s.restInternalContainerRequest)
 	mux.HandleFunc("GET /api/v1/runners", s.restListRunners)
 	mux.HandleFunc("GET /api/v1/runners/counts", s.restCountRunners)
 	// The console's own view of the same collection: it may omit the user (the
