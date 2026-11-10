@@ -6,9 +6,25 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 )
+
+// searchTermLimit bounds one free-text condition. A fragment long enough to
+// matter is far shorter than this; the cap keeps a pasted document from becoming
+// a pattern.
+const searchTermLimit = 128
+
+// searchTerm reads one filter parameter: trimmed, and capped in runes so a
+// multi-byte fragment is never cut mid-character.
+func searchTerm(r *http.Request, key string) string {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
+	if runes := []rune(value); len(runes) > searchTermLimit {
+		return strings.TrimSpace(string(runes[:searchTermLimit]))
+	}
+	return value
+}
 
 // clientIP extracts the client IP, honoring X-Forwarded-For.
 func clientIP(r *http.Request) string {
@@ -106,4 +122,3 @@ func (s *Server) restRecordAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "recorded"})
 }
-

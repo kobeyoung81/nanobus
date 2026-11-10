@@ -356,10 +356,6 @@ func newMigrateUpCmd(configPath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("migrate: %w", err)
 			}
-			backfilled, err := s.BackfillSessionTitles()
-			if err != nil {
-				return fmt.Errorf("backfill session titles: %w", err)
-			}
 			if len(applied) == 0 {
 				fmt.Println("Database is up to date.")
 			} else {
@@ -367,9 +363,6 @@ func newMigrateUpCmd(configPath *string) *cobra.Command {
 					fmt.Printf("  Applied: %s\n", name)
 				}
 				fmt.Printf("Applied %d migration(s).\n", len(applied))
-			}
-			if backfilled > 0 {
-				fmt.Printf("  Backfilled titles for %d session(s).\n", backfilled)
 			}
 			return nil
 		},

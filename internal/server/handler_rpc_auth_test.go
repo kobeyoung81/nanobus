@@ -76,36 +76,3 @@ func TestHandleValidateToken_MissingAuthConfig(t *testing.T) {
 		t.Fatalf("expected error response, got %+v", resp)
 	}
 }
-
-func TestHandleListAgents(t *testing.T) {
-	s := testServerMongo(t)
-	seedAgent(t, s, "agent-1", "user-1", "active")
-
-	msg, _ := nanoprotocol.NewMessage(nanoprotocol.TypeListAgents, nanoprotocol.ListAgentsRequest{UserID: "user-1"})
-	resp := s.handleListAgents(msg)
-	if resp == nil || resp.Type != nanoprotocol.TypeAgentsListed {
-		t.Fatalf("expected agents_listed response, got %+v", resp)
-	}
-	var out nanoprotocol.ListAgentsResponse
-	if err := resp.DecodePayload(&out); err != nil {
-		t.Fatal(err)
-	}
-	if len(out.Agents) != 1 || out.Agents[0].ID != "agent-1" || out.Agents[0].UserID != "user-1" {
-		t.Fatalf("unexpected agents: %+v", out.Agents)
-	}
-	// The per-mode model/thinking now ride on the snapshot's Agents list (each
-	// AgentTypeDef.Override), not on AgentInfo.
-	if out.Agents[0].MaxIterations != 10 {
-		t.Fatalf("MaxIterations = %d, want 10", out.Agents[0].MaxIterations)
-	}
-}
-
-func TestHandleListAgents_RequiresUserID(t *testing.T) {
-	s := NewServer(storetest.Connect(t))
-
-	msg, _ := nanoprotocol.NewMessage(nanoprotocol.TypeListAgents, nanoprotocol.ListAgentsRequest{})
-	resp := s.handleListAgents(msg)
-	if resp == nil || resp.Type != nanoprotocol.TypeError {
-		t.Fatalf("expected error response, got %+v", resp)
-	}
-}

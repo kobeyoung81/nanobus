@@ -61,31 +61,3 @@ func (s *Server) handleValidateToken(msg nanoprotocol.Message) *nanoprotocol.Mes
 	respMsg, _ := nanoprotocol.NewMessage(nanoprotocol.TypeTokenValid, out)
 	return &respMsg
 }
-
-// handleListAgents returns the agents belonging to a user.
-func (s *Server) handleListAgents(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.ListAgentsRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-	if req.UserID == "" {
-		resp := nanoprotocol.NewErrorMessage("user_id is required")
-		return &resp
-	}
-
-	agents, err := s.store.ListAgents(req.UserID)
-	if err != nil {
-		slog.Error("list agents failed", "user_id", req.UserID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("list agents failed")
-		return &resp
-	}
-
-	infos := make([]nanoprotocol.AgentInfo, 0, len(agents))
-	for _, a := range agents {
-		infos = append(infos, s.agentInfo(a))
-	}
-
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeAgentsListed, nanoprotocol.ListAgentsResponse{Agents: infos})
-	return &resp
-}

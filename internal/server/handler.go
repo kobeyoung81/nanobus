@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanoprotocol"
@@ -57,14 +55,10 @@ func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
 		return s.handleRegisterRunner(msg)
 	case nanoprotocol.TypeValidateToken:
 		return s.handleValidateToken(msg)
-	case nanoprotocol.TypeListAgents:
-		return s.handleListAgents(msg)
 	// create/update/delete over the protocol are gone with the agent rows: the
 	// portal serves the management surface. list_agents and
 	// update_agent_status remain because the supervisors and the gateway speak
 	// them; they read this database and forward the one write.
-	case nanoprotocol.TypeUpdateAgentStatus:
-		return s.handleUpdateAgentStatus(msg)
 	case nanoprotocol.TypeUpdateUserStatus:
 		return s.handleUpdateUserStatus(msg)
 	case nanoprotocol.TypeGetUserInfo:
@@ -91,14 +85,6 @@ func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
 		return s.handleListAgentTypes(msg)
 	case nanoprotocol.TypeSetAgentPermission:
 		return s.handleSetAgentPermission(msg)
-	case nanoprotocol.TypeSaveSession:
-		return s.handleSaveSession(msg)
-	case nanoprotocol.TypeArchiveSession:
-		return s.handleArchiveSession(msg)
-	case nanoprotocol.TypeListSessions:
-		return s.handleListSessions(msg)
-	case nanoprotocol.TypeGetSession:
-		return s.handleGetSession(msg)
 	case nanoprotocol.TypeGetBindingAgent:
 		return s.handleGetBindingAgent(msg)
 	case nanoprotocol.TypeSetBindingAgent:
@@ -578,105 +564,6 @@ func (s *Server) handleRegisterRunner(msg nanoprotocol.Message) *nanoprotocol.Me
 	return &resp
 }
 
-func (s *Server) handleSaveSession(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.SaveSessionRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	start := time.Now()
-	rec := store.SessionRecord{
-		ID:          req.SessionID,
-		AgentID:     req.AgentID,
-		AccountID:   req.AccountID,
-		Channel:     req.Channel,
-		ChatID:      req.ChatID,
-		Messages:    req.Messages,
-		Summary:     req.Summary,
-		Title:       req.Title,
-		Meta:        req.Meta,
-		Status:      req.Status,
-		TurnRunning: req.TurnRunning,
-		// A delta save: the store accumulates the totals from it.
-		FromIndex:       req.FromIndex,
-		MessagesOmitted: req.MessagesOmitted,
-	}
-	if err := s.store.SaveSession(rec); err != nil {
-		// A delta that does not follow the stored conversation is not a failure to
-		// report as one: it is an answer — "send the whole array" — and the sender
-		// acts on it immediately. Saying so in the response keeps a resync out of
-		// the failure ledger, which is meant for history that is not landing.
-		if errors.Is(err, store.ErrSessionResync) {
-			slog.Warn("session delta out of sync, asking for a full snapshot",
-				"session_id", req.SessionID, "from_index", req.FromIndex)
-			resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeSessionSaved, nanoprotocol.SaveSessionResponse{
-				SessionID: req.SessionID,
-				Resync:    true,
-			})
-			return &resp
-		}
-		slog.Error("save session failed", "session_id", req.SessionID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("save session: " + err.Error())
-		return &resp
-	}
-	slog.Debug("session saved to db",
-		"session_id", req.SessionID,
-		"messages_bytes", len(req.Messages),
-		"delta", req.MessagesOmitted,
-		"db_ms", time.Since(start).Milliseconds(),
-	)
-
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeSessionSaved, nanoprotocol.SaveSessionResponse{
-		SessionID: req.SessionID,
-	})
-	return &resp
-}
-
-func (s *Server) handleArchiveSession(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.GetSessionRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	if err := s.store.ArchiveSession(req.SessionID); err != nil {
-		slog.Error("archive session failed", "session_id", req.SessionID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("archive session: " + err.Error())
-		return &resp
-	}
-
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeSessionArchived, nanoprotocol.SaveSessionResponse{
-		SessionID: req.SessionID,
-	})
-	return &resp
-}
-
-func (s *Server) handleListSessions(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.ListSessionsRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	records, err := s.store.ListSessions(req.AgentID, req.Limit, req.Offset)
-	if err != nil {
-		slog.Error("list sessions failed", "agent_id", req.AgentID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("list sessions: " + err.Error())
-		return &resp
-	}
-
-	metas := make([]nanoprotocol.SessionMeta, 0, len(records))
-	for _, rec := range records {
-		metas = append(metas, store.SessionMeta(rec))
-	}
-
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeSessionsListed, nanoprotocol.ListSessionsResponse{
-		Sessions: metas,
-	})
-	return &resp
-}
-
 func (s *Server) handleGetBindingAgent(msg nanoprotocol.Message) *nanoprotocol.Message {
 	var req nanoprotocol.GetBindingAgentRequest
 	if err := msg.DecodePayload(&req); err != nil {
@@ -713,33 +600,6 @@ func (s *Server) handleSetBindingAgent(msg nanoprotocol.Message) *nanoprotocol.M
 	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeBindingAgentSet, nanoprotocol.SetBindingAgentResponse{
 		BindingID: req.BindingID,
 		AgentID:   req.AgentID,
-	})
-	return &resp
-}
-
-func (s *Server) handleGetSession(msg nanoprotocol.Message) *nanoprotocol.Message {
-	var req nanoprotocol.GetSessionRequest
-	if err := msg.DecodePayload(&req); err != nil {
-		resp := nanoprotocol.NewErrorMessage("invalid payload: " + err.Error())
-		return &resp
-	}
-
-	rec, err := s.store.GetSession(req.SessionID)
-	if err != nil {
-		slog.Error("get session failed", "session_id", req.SessionID, "error", err)
-		resp := nanoprotocol.NewErrorMessage("get session: " + err.Error())
-		return &resp
-	}
-	if rec == nil {
-		resp := nanoprotocol.NewErrorMessage("session not found")
-		return &resp
-	}
-
-	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeSession, nanoprotocol.GetSessionResponse{
-		SessionID: rec.ID,
-		AgentID:   rec.AgentID,
-		Messages:  rec.Messages,
-		Summary:   rec.Summary,
 	})
 	return &resp
 }

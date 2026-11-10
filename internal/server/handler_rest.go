@@ -87,14 +87,9 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// there; the bus keeps only the agent-facing surfaces it is still the
 	// address of — terminals above and the supervisors' protocol messages.
 
-	// Sessions
-	mux.HandleFunc("GET /api/v1/sessions", s.restListSessions)
-	mux.HandleFunc("GET /api/v1/sessions/{sessionID}", s.restGetSession)
-	mux.HandleFunc("DELETE /api/v1/sessions/{sessionID}", s.restArchiveSession)
-	// The conversation log's cross-agent reads: the portal's own shape, served
-	// from here so it stops reading agent_sessions directly.
-	mux.HandleFunc("GET /api/v1/conversations", s.restListConversations)
-	mux.HandleFunc("GET /api/v1/conversations/{sessionID}", s.restGetConversation)
+	// Sessions and the conversation log are the portal's: it owns
+	// portal_sessions, so it serves them. Nothing about a conversation travels
+	// through here any more.
 
 	// Config
 
