@@ -78,6 +78,7 @@ for gateway and agent connections.`,
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
 				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
+				server.WithPortalURL(cfg.Portal.BaseURL, cfg.InternalToken),
 				server.WithMaxContentBytes(cfg.Server.MaxContentBytes),
 				server.WithInternalToken(cfg.InternalToken),
 			)

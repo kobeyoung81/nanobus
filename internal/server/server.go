@@ -14,6 +14,7 @@ import (
 
 	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/middleware"
+	"gitee.com/kobeyoung81/nanobus/internal/portalclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/stream"
 	"github.com/gorilla/websocket"
@@ -27,6 +28,7 @@ type Server struct {
 	srv               *http.Server
 	nanoauthURL       string
 	admin             *adminclient.Client
+	portal            *portalclient.Client
 	chunks            *stream.ChunkBuffer
 	sse               *sseHub
 	events            *sseHub
@@ -102,6 +104,15 @@ func WithAdminURL(url, token string) ServerOption {
 }
 
 // WithMaxContentBytes sets the maximum accepted message content size.
+// WithPortalURL sets the portal's base URL. The agent rows belong to the portal
+// now; the bus forwards the two writes its protocol surface still receives
+// (a runtime status and a deleted type's reference cleanup) there.
+func WithPortalURL(url, token string) ServerOption {
+	return func(s *Server) {
+		s.portal = portalclient.New(url, token)
+	}
+}
+
 func WithMaxContentBytes(n int) ServerOption {
 	return func(s *Server) {
 		if n > 0 {

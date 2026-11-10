@@ -9,6 +9,10 @@ type BusConfig struct {
 	// Admin is the admin module's base URL. Config writes are forwarded there:
 	// this service no longer writes the admin_ collections, it asks their owner.
 	Admin AdminConfig `json:"admin" mapstructure:"admin"`
+	// Portal is the portal service's base URL. The agent rows and their groups
+	// are the portal's; the two writes this service still receives for them are
+	// forwarded there.
+	Portal PortalConfig `json:"portal" mapstructure:"portal"`
 	// InternalToken is the shared secret the platform's own callers present on
 	// the bus's internal endpoints (NANOSEC_BUS_INTERNAL_TOKEN). It is empty on
 	// a deployment that has not been given one, and the bus then refuses those
@@ -37,6 +41,11 @@ type DatabaseConfig struct {
 
 // AdminConfig holds the admin module's connection settings.
 type AdminConfig struct {
+	BaseURL string `json:"base_url" mapstructure:"base_url"`
+}
+
+// PortalConfig holds the portal service connection settings.
+type PortalConfig struct {
 	BaseURL string `json:"base_url" mapstructure:"base_url"`
 }
 

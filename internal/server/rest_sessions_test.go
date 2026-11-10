@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
-
-	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 )
 
 // seedSessionDoc writes a session document. The endpoint's answer is computed
@@ -241,92 +239,6 @@ func TestRestListSessions_StaleFlagReadsNotRunning(t *testing.T) {
 	}
 }
 
-// TestRestAgentsAttention_Shape pins the snapshot the sidebar renders: one entry
-// per conversation of the user's agents, with both flags resolved on the server
-// (running through the freshness window, awaiting from the meta blob even though
-// it is not aged out).
-func TestRestAgentsAttention_Shape(t *testing.T) {
-	srv := testServerMongo(t)
-	storetest.SeedAgents(t, srv.store, "user-1", "agent-1", "agent-2")
-
-	now := time.Now().UTC()
-	fresh := now.Add(-2 * time.Second)
-	old := now.Add(-10 * time.Minute)
-	seedSessionDoc(t, srv, "web:chat-1", "agent-1", "chat-1", "", []string{"a"}, true, &fresh, now)
-	seedSessionDoc(t, srv, "web:chat-2", "agent-1", "chat-2", "", []string{"a"}, true, &old, now)
-	seedSessionDoc(t, srv, "web:chat-3", "agent-2", "chat-3", "", []string{"a"}, false, nil, now)
-
-	// A pending question in the meta blob is what "awaiting" reads.
-	if _, err := srv.store.DB().Collection("portal_sessions").UpdateOne(context.Background(),
-		bson.D{{Key: "_id", Value: "web:chat-1"}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "meta", Value: `{"_pending_question":"{\"text\":\"pick\"}"}`}}}},
-	); err != nil {
-		t.Fatalf("set meta: %v", err)
-	}
-
-	req := httptest.NewRequest("GET", "/api/v1/agents/attention?user_id=user-1", nil)
-	rec := httptest.NewRecorder()
-	srv.restAgentsAttention(rec, req)
-
-	if rec.Code != 200 {
-		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		Conversations []struct {
-			AgentID   string `json:"agent_id"`
-			ChatID    string `json:"chat_id"`
-			SessionID string `json:"session_id"`
-			Running   bool   `json:"running"`
-			Awaiting  bool   `json:"awaiting"`
-			UpdatedAt string `json:"updated_at"`
-		} `json:"conversations"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(body.Conversations) != 3 {
-		t.Fatalf("got %d conversations, want 3: %+v", len(body.Conversations), body.Conversations)
-	}
-	byChat := map[string]bool{}
-	for _, c := range body.Conversations {
-		byChat[c.ChatID] = c.Running
-	}
-	if !byChat["chat-1"] {
-		t.Fatalf("the fresh turn does not read as running: %+v", body.Conversations)
-	}
-	if byChat["chat-2"] {
-		t.Fatalf("a ten-minute-old turn read as running: %+v", body.Conversations)
-	}
-	if byChat["chat-3"] {
-		t.Fatalf("an idle conversation reported attention: %+v", body.Conversations)
-	}
-	for _, c := range body.Conversations {
-		if c.ChatID == "chat-1" && !c.Awaiting {
-			t.Fatalf("the pending question was not read: %+v", c)
-		}
-		// The browser compares this timestamp with what it last read; a
-		// missing or unparseable value would silently disable unread badges.
-		if c.UpdatedAt == "" {
-			t.Fatalf("conversation %s has no updated_at: %+v", c.ChatID, c)
-		}
-		if _, err := time.Parse(time.RFC3339Nano, c.UpdatedAt); err != nil {
-			t.Fatalf("updated_at %q is not RFC3339Nano: %v", c.UpdatedAt, err)
-		}
-	}
-}
-
-func TestRestAgentsAttention_RequiresUserID(t *testing.T) {
-	srv := testServerMongo(t)
-
-	req := httptest.NewRequest("GET", "/api/v1/agents/attention", nil)
-	rec := httptest.NewRecorder()
-	srv.restAgentsAttention(rec, req)
-
-	if rec.Code != 400 {
-		t.Fatalf("status = %d, want 400", rec.Code)
-	}
-}
-
 func TestMatchesETag(t *testing.T) {
 	const etag = `W/"12-4096-100"`
 	for _, tc := range []struct {
@@ -389,30 +301,3 @@ func TestTurnRunningStaleWindow(t *testing.T) {
 // list applies the same freshness window as a single-session read. A crashed
 // agent leaves turn_running set, and the sidebar's running dot must not outlive
 // the window — the list used to return the stored flag verbatim.
-
-// TestMetaHasPending pins the parse of the two markers nanosec writes while it
-// blocks on the user. A malformed or absent blob must read as "nothing pending"
-// instead of propagating a parse failure: the dot is an affordance, not data.
-func TestMetaHasPending(t *testing.T) {
-	tests := []struct {
-		name string
-		meta string
-		want bool
-	}{
-		{name: "question", meta: `{"_pending_question":"{\"text\":\"pick\"}"}`, want: true},
-		{name: "approval", meta: `{"_pending_approval":"{\"tool\":\"bash\"}"}`, want: true},
-		{name: "resolved", meta: `{"_pending_question":""}`, want: false},
-		{name: "unrelated keys", meta: `{"todos":"[]","_summary_count":"2"}`, want: false},
-		{name: "empty", meta: "", want: false},
-		{name: "malformed", meta: `{`, want: false},
-		{name: "not an object", meta: `["a"]`, want: false},
-		{name: "non string value", meta: `{"_pending_question":42}`, want: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := metaHasPending(tc.meta); got != tc.want {
-				t.Fatalf("metaHasPending(%q) = %v, want %v", tc.meta, got, tc.want)
-			}
-		})
-	}
-}

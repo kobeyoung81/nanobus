@@ -59,12 +59,10 @@ func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
 		return s.handleValidateToken(msg)
 	case nanoprotocol.TypeListAgents:
 		return s.handleListAgents(msg)
-	case nanoprotocol.TypeCreateAgent:
-		return s.handleCreateAgent(msg)
-	case nanoprotocol.TypeUpdateAgent:
-		return s.handleUpdateAgent(msg)
-	case nanoprotocol.TypeDeleteAgent:
-		return s.handleDeleteAgent(msg)
+	// create/update/delete over the protocol are gone with the agent rows: the
+	// portal serves the management surface. list_agents and
+	// update_agent_status remain because the supervisors and the gateway speak
+	// them; they read this database and forward the one write.
 	case nanoprotocol.TypeUpdateAgentStatus:
 		return s.handleUpdateAgentStatus(msg)
 	case nanoprotocol.TypeUpdateUserStatus:

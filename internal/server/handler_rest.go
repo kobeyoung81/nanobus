@@ -82,30 +82,10 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/auth/refresh-tokens/{hash}", s.restGetRefreshToken)
 	mux.HandleFunc("DELETE /api/v1/auth/refresh-tokens/{hash}", s.restDeleteRefreshToken)
 
-	// Agents
-	mux.HandleFunc("POST /api/v1/agents", s.restCreateAgent)
-	mux.HandleFunc("GET /api/v1/agents", s.restListAgents)
-	// The literal path is more specific than /api/v1/agents/{id} below, so Go's
-	// mux routes this exact path here rather than to the agent lookup.
-	mux.HandleFunc("GET /api/v1/agents/attention", s.restAgentsAttention)
-
-	// Agent groups: a user's private, single-level organization of agents.
-	// The literal /reorder is more specific than /{id}, so Go's mux keeps them
-	// apart.
-	mux.HandleFunc("GET /api/v1/agent-groups", s.restListAgentGroups)
-	mux.HandleFunc("POST /api/v1/agent-groups", s.restCreateAgentGroup)
-	mux.HandleFunc("POST /api/v1/agent-groups/reorder", s.restReorderAgentGroups)
-	mux.HandleFunc("POST /api/v1/agent-groups/arrange", s.restArrangeAgentGroups)
-	mux.HandleFunc("PUT /api/v1/agent-groups/{id}", s.restRenameAgentGroup)
-	mux.HandleFunc("DELETE /api/v1/agent-groups/{id}", s.restDeleteAgentGroup)
-
-	mux.HandleFunc("GET /api/v1/agents/{id}", s.restGetAgent)
-	mux.HandleFunc("PUT /api/v1/agents/{id}", s.restUpdateAgent)
-	mux.HandleFunc("PUT /api/v1/agents/{id}/status", s.restUpdateAgentStatus)
-	mux.HandleFunc("POST /api/v1/agents/{id}/provision", s.restProvisionAgent)
-	mux.HandleFunc("POST /api/v1/agents/{id}/restart", s.restRestartAgent)
-	mux.HandleFunc("POST /api/v1/agents/{id}/restore", s.restRestoreAgent)
-	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.restDeleteAgent)
+	// Agents and their groups are the portal's data now. The management paths
+	// (/api/v1/agents, /api/v1/agent-groups, the attention snapshot) are served
+	// there; the bus keeps only the agent-facing surfaces it is still the
+	// address of — terminals above and the supervisors' protocol messages.
 
 	// Sessions
 	mux.HandleFunc("GET /api/v1/sessions", s.restListSessions)
@@ -134,6 +114,11 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/internal/agent-types/{id}/clear-refs", s.restClearAgentTypeRefs)
 	// The portal owns the agent rows; the provisioning queue is still here.
 	mux.HandleFunc("POST /api/v1/internal/container-requests", s.restInternalContainerRequest)
+	// The portal asks for these two broadcasts after it writes an agent, so the
+	// supervisors (agents_changed) and the running processes (settings_changed)
+	// keep reacting exactly as they did when this service wrote the rows.
+	mux.HandleFunc("POST /api/v1/internal/agents-changed", s.restInternalAgentsChanged)
+	mux.HandleFunc("POST /api/v1/internal/agents-settings-changed", s.restInternalAgentSettingsChanged)
 	mux.HandleFunc("GET /api/v1/runners", s.restListRunners)
 	mux.HandleFunc("GET /api/v1/runners/counts", s.restCountRunners)
 	// The console's own view of the same collection: it may omit the user (the

@@ -17,10 +17,17 @@ func (s *Server) restClearAgentTypeRefs(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type id is required"})
 		return
 	}
-	cleared, err := s.store.ClearAgentsTypeRef(id)
+	// The agent rows belong to the portal, so the reference is cleared there.
+	if s.portal == nil || !s.portal.Enabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "the portal module is not configured"})
+		return
+	}
+	ctx, cancel := portalContext()
+	defer cancel()
+	cleared, err := s.portal.ClearTypeRefs(ctx, id)
 	if err != nil {
 		slog.Error("clear agent type references", "type_id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "internal error"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"type_id": id, "cleared": cleared})
