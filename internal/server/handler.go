@@ -30,6 +30,11 @@ func (s *Server) handleConnection(conn *websocket.Conn) {
 }
 
 func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
+	// Bridge for containers still running the previous runtime image; see
+	// legacy_agents.go.
+	if legacyType(msg.Type) {
+		return s.handleLegacyAgentMessage(msg)
+	}
 	switch msg.Type {
 	case nanoprotocol.TypeResolveUser:
 		return s.handleResolveUser(msg)

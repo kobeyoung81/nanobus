@@ -59,34 +59,74 @@ func (c *Client) ClearTypeRefs(ctx context.Context, typeID string) (int, error) 
 	return out.Cleared, nil
 }
 
-func (c *Client) post(ctx context.Context, path string, body, out any) error {
-	if !c.Enabled() {
-		return fmt.Errorf("portal module is not configured")
+// GetJSON reads one internal endpoint.
+func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
 	}
+	_, err = c.do(req, out)
+	return err
+}
+
+// PostJSON sends an already-encoded body and reports the status, so a caller can
+// recognise a 409 without decoding it as a failure.
+func (c *Client) PostJSON(ctx context.Context, path string, body []byte, out any) (int, error) {
+	req, err := c.request(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return 0, err
+	}
+	return c.do(req, out)
+}
+
+func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+	req, err := c.request(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return err
+	}
+	_, err = c.do(req, out)
+	return err
+}
+
+func (c *Client) request(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("portal module is not configured")
+	}
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	return req, nil
+}
+
+// do performs the request and reports the status code. A 4xx/5xx is returned as
+// both an error and a status, so a caller that treats one code specially (409 →
+// resend everything) does not have to parse the message.
+func (c *Client) do(req *http.Request, out any) (int, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("call portal %s: %w", path, err)
+		return 0, fmt.Errorf("call portal %s: %w", req.URL.Path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= http.StatusBadRequest {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("call portal %s: status %d: %s", path, resp.StatusCode, bytes.TrimSpace(detail))
+		return resp.StatusCode, fmt.Errorf("call portal %s: status %d: %s", req.URL.Path, resp.StatusCode, bytes.TrimSpace(detail))
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
+		return resp.StatusCode, nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return resp.StatusCode, json.NewDecoder(resp.Body).Decode(out)
 }
