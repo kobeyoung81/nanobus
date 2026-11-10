@@ -12,10 +12,8 @@ import (
 	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
-	"gitee.com/kobeyoung81/nanobus/internal/agenttypes"
 	"gitee.com/kobeyoung81/nanobus/internal/config"
 	buslog "gitee.com/kobeyoung81/nanobus/internal/log"
-	"gitee.com/kobeyoung81/nanobus/internal/promptbundle"
 	"gitee.com/kobeyoung81/nanobus/internal/server"
 	"gitee.com/kobeyoung81/nanobus/internal/skillbundle"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
@@ -106,8 +104,6 @@ for gateway and agent connections.`,
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newUserCmd(&configPath))
 	rootCmd.AddCommand(newSkillsCmd(&configPath))
-	rootCmd.AddCommand(newPromptsCmd(&configPath))
-	rootCmd.AddCommand(newAgentTypesCmd(&configPath))
 	rootCmd.AddCommand(newMcpCmd(&configPath))
 	rootCmd.AddCommand(newMigrateCmd(&configPath))
 
@@ -252,102 +248,6 @@ bundle version advances, and per-type baselines and per-user acks are preserved.
 				return fmt.Errorf("seed skills: %w", err)
 			}
 			fmt.Printf("Seeded %d bundled skill(s) (%d new, %d updated).\n", len(defs), inserted, updated)
-			return nil
-		},
-	}
-}
-
-func newPromptsCmd(configPath *string) *cobra.Command {
-	promptsCmd := &cobra.Command{
-		Use:   "prompts",
-		Short: "Manage the bundled agent-type system prompts",
-	}
-	promptsCmd.AddCommand(newPromptsSeedCmd(configPath))
-	return promptsCmd
-}
-
-func newPromptsSeedCmd(configPath *string) *cobra.Command {
-	var force bool
-	cmd := &cobra.Command{
-		Use:   "seed",
-		Short: "Seed the bundled system prompts onto the agent types",
-		Long: `Writes the system prompts shipped with this binary onto the seeded agent
-types (agent_types.prompt). Prompt text is admin-editable, so an unmodified
-platform seed is replaced while a prompt edited after seeding is left alone
-unless --force is given. Re-running is safe.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore(configPath)
-			if err != nil {
-				return err
-			}
-			defer s.Close()
-
-			bundled, err := promptbundle.Load()
-			if err != nil {
-				return fmt.Errorf("load prompt bundle: %w", err)
-			}
-			updated, skipped, err := s.SeedPlatformPrompts(bundled, force)
-			if err != nil {
-				return fmt.Errorf("seed prompts: %w", err)
-			}
-			head, err := promptbundle.LoadSharedHead()
-			if err != nil {
-				return fmt.Errorf("load shared head prompt: %w", err)
-			}
-			headState := "absent"
-			if head.Text != "" {
-				headUpdated, err := s.SeedSessionHead(head, force)
-				if err != nil {
-					return fmt.Errorf("seed shared head prompt: %w", err)
-				}
-				headState = "left as-is"
-				if headUpdated {
-					headState = "updated"
-				}
-			}
-			fmt.Printf("Seeded %d bundled prompt(s) (%d updated, %d left as-is); shared head prompt %s.\n",
-				len(bundled), updated, skipped, headState)
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&force, "force", false, "also overwrite prompts that were edited after seeding")
-	return cmd
-}
-
-func newAgentTypesCmd(configPath *string) *cobra.Command {
-	agentTypesCmd := &cobra.Command{
-		Use:   "agent-types",
-		Short: "Manage the built-in agent type definitions",
-	}
-	agentTypesCmd.AddCommand(newAgentTypesSeedCmd(configPath))
-	return agentTypesCmd
-}
-
-func newAgentTypesSeedCmd(configPath *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "seed",
-		Short: "Seed the built-in agent type definitions this binary ships",
-		Long: `Inserts the platform's agent types (the build and plan session modes and
-the internal workers) and the capability baselines they start with, leaving
-anything that already exists exactly as it is: prompts, permissions and settings
-are admin-editable, and a deploy must not undo those edits.
-
-Prompt text is not part of this — it ships in the prompt bundle and is written by
-"nanobus prompts seed". Safe to re-run.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore(configPath)
-			if err != nil {
-				return err
-			}
-			defer s.Close()
-
-			defs := agenttypes.Definitions()
-			inserted, err := s.SeedAgentTypes(defs)
-			if err != nil {
-				return fmt.Errorf("seed agent types: %w", err)
-			}
-			fmt.Printf("Seeded %d agent type(s) (%d inserted, %d already present).\n",
-				len(defs), inserted, len(defs)-inserted)
 			return nil
 		},
 	}

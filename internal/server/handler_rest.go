@@ -154,17 +154,8 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/capabilities/builtin", s.restListBuiltin)
 	mux.HandleFunc("PUT /api/v1/capabilities/builtin/{id}", s.restUpdateBuiltin)
 	// Agent types (platform policy plane) + permission keys
-	mux.HandleFunc("GET /api/v1/agent-types", s.restListAgentTypes)
-	mux.HandleFunc("POST /api/v1/agent-types", s.restSaveAgentType)
-	mux.HandleFunc("GET /api/v1/agent-types/{id}", s.restGetAgentType)
-	mux.HandleFunc("PUT /api/v1/agent-types/{id}", s.restSaveAgentType)
-	mux.HandleFunc("PUT /api/v1/agent-types/{id}/capabilities", s.restSetTypeCapability)
-	mux.HandleFunc("DELETE /api/v1/agent-types/{id}/capabilities", s.restDeleteTypeCapability)
-	mux.HandleFunc("DELETE /api/v1/agent-types/{id}", s.restDeleteAgentType)
 	// Prompt baseline: where each type's stored prompt stands relative to the
 	// bundle this binary ships, and the single-type restore behind that.
-	mux.HandleFunc("GET /api/v1/agent-types/prompt-status", s.restAgentTypePromptStatus)
-	mux.HandleFunc("POST /api/v1/agent-types/{id}/prompt/reset", s.restResetAgentTypePrompt)
 	mux.HandleFunc("GET /api/v1/capabilities/mcp", s.restListMcpAdmin)
 	mux.HandleFunc("POST /api/v1/capabilities/mcp", s.restCreateMcpAdmin)
 	mux.HandleFunc("POST /api/v1/capabilities/mcp/test", s.restTestMcpAdmin)
@@ -196,9 +187,7 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/user/agents/{agentID}/modes/{typeID}", s.restSetAgentMode)
 
 	// Assignable conversational agent types for new agents.
-	mux.HandleFunc("GET /api/v1/user/agent-types", s.restListMyAgentTypes)
 	// Prompt blocks of the session agents (read-only on the user plane).
-	mux.HandleFunc("GET /api/v1/user/agents/{agentID}/prompt-blocks", s.restGetAgentPromptBlocks)
 	// The account's language: the user-level half of the two-level setting.
 	mux.HandleFunc("GET /api/v1/user/preferences", s.restGetPreferences)
 	mux.HandleFunc("PUT /api/v1/user/preferences", s.restSetPreferences)
@@ -209,36 +198,18 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/v1/user/secrets/{kind}/{ref}", s.restDeleteUserSecret)
 
 	// Prompt blocks of the session agents (admin).
-	mux.HandleFunc("GET /api/v1/prompt-blocks", s.restGetPromptBlocks)
-	mux.HandleFunc("PUT /api/v1/prompt-blocks", s.restSavePromptBlock)
 
 	// Model catalog: admin (global) management
-	mux.HandleFunc("GET /api/v1/models", s.restListModelsAdmin)
-	mux.HandleFunc("POST /api/v1/models/providers", s.restCreateProviderAdmin)
-	mux.HandleFunc("POST /api/v1/models/providers/test", s.restTestProviderAdmin)
-	mux.HandleFunc("PUT /api/v1/models/providers/{id}", s.restUpdateProviderAdmin)
-	mux.HandleFunc("DELETE /api/v1/models/providers/{id}", s.restDeleteProviderAdmin)
-	mux.HandleFunc("POST /api/v1/models/models", s.restCreateModelAdmin)
-	mux.HandleFunc("POST /api/v1/models/test", s.restTestModelAdmin)
-	mux.HandleFunc("PUT /api/v1/models/models/{id}", s.restUpdateModelAdmin)
-	mux.HandleFunc("DELETE /api/v1/models/models/{id}", s.restDeleteModelAdmin)
 	// Give one platform model to every seeded agent type (console action).
-	mux.HandleFunc("POST /api/v1/models/models/{id}/apply-to-agent-types", s.restApplyModelToBuiltInTypes)
 
 	// Model catalog: user library (own scope)
-	mux.HandleFunc("GET /api/v1/user/models", s.restListMyModels)
-	mux.HandleFunc("POST /api/v1/user/models/providers", s.restCreateMyProvider)
-	mux.HandleFunc("POST /api/v1/user/models/providers/test", s.restTestProviderMy)
-	mux.HandleFunc("PUT /api/v1/user/models/providers/{id}", s.restUpdateMyProvider)
-	mux.HandleFunc("DELETE /api/v1/user/models/providers/{id}", s.restDeleteMyProvider)
-	mux.HandleFunc("POST /api/v1/user/models/models", s.restCreateMyModel)
-	mux.HandleFunc("POST /api/v1/user/models/test", s.restTestModelMy)
-	mux.HandleFunc("PUT /api/v1/user/models/models/{id}", s.restUpdateMyModel)
-	mux.HandleFunc("DELETE /api/v1/user/models/models/{id}", s.restDeleteMyModel)
 
 	// Voice input: platform-configured dictation for the browser composer. The
 	// audio itself travels over the WebSocket below; these are the settings, the
 	// one-time session mint and the post-recording polish pass.
+	// The user-facing prompt view still belongs here until the agent rows move:
+	// it checks the agent's owner, which is this service's data.
+	mux.HandleFunc("GET /api/v1/user/agents/{agentID}/prompt-blocks", s.restGetAgentPromptBlocks)
 	mux.HandleFunc("GET /api/v1/user/voice/config", s.restVoiceConfig)
 	mux.HandleFunc("POST /api/v1/user/voice/session", s.restVoiceSession)
 	mux.HandleFunc("POST /api/v1/user/voice/polish", s.restVoicePolish)
