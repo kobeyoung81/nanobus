@@ -159,19 +159,8 @@ func (b mcpBody) record(scope, owner string) store.McpServerRecord {
 		Headers:   b.Headers,
 	}
 }
-
 func (s *Server) restListMcpAdmin(w http.ResponseWriter, r *http.Request) {
-	recs, err := s.store.ListMcpServers("")
-	if err != nil {
-		slog.Error("list mcp servers", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	out := make([]nanoprotocol.McpServerDef, 0, len(recs))
-	for _, rec := range recs {
-		out = append(out, mcpserverDef(rec))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"servers": out, "count": len(out)})
+	s.forwardToAdmin(w, r, "GET", "/api/v1/capabilities/mcp")
 }
 
 func mcpserverDef(rec store.McpServerRecord) nanoprotocol.McpServerDef {
@@ -188,79 +177,17 @@ func mcpserverDef(rec store.McpServerRecord) nanoprotocol.McpServerDef {
 		Locked:         rec.Locked,
 	}
 }
-
 func (s *Server) restCreateMcpAdmin(w http.ResponseWriter, r *http.Request) {
-	var body mcpBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if body.Name == "" || body.Transport == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and transport are required"})
-		return
-	}
-	rec := body.record("platform", "")
-	if err := s.store.CreateMcp(rec); err != nil {
-		slog.Error("create mcp server", "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	s.emitCapabilitiesChanged("mcp")
-	s.recordAudit(r, "capabilities.mcp.create", "mcp", rec.ID, nil)
-	writeJSON(w, http.StatusCreated, map[string]string{"id": rec.ID, "status": "created"})
+	s.forwardToAdmin(w, r, "POST", "/api/v1/capabilities/mcp")
 }
-
 func (s *Server) restUpdateMcpAdmin(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var body mcpBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	rec := body.record("platform", "")
-	rec.ID = id
-	if existing, err := s.store.GetMcpServer(id); err == nil && existing != nil {
-		preserveMaskedHeaders(rec.Headers, existing.Headers)
-	}
-	if err := s.store.UpdateMcp(id, rec); err != nil {
-		slog.Error("update mcp server", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	s.emitCapabilitiesChanged("mcp")
-	s.recordAudit(r, "capabilities.mcp.update", "mcp", id, nil)
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+	s.forwardToAdmin(w, r, "PUT", "/api/v1/capabilities/mcp/"+url.PathEscape(r.PathValue("id")))
 }
-
-// restUpdateMcpState updates only the definition-plane default (default_enabled /
-// locked) for an MCP server; used by the Capability Center's inline controls.
 func (s *Server) restUpdateMcpState(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var body builtinStateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if err := s.store.UpdateMcpState(id, body.DefaultEnabled, body.Locked); err != nil {
-		slog.Error("update mcp state", "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	s.emitCapabilitiesChanged("mcp")
-	s.recordAudit(r, "capabilities.mcp.state", "mcp", id, nil)
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+	s.forwardToAdmin(w, r, "PUT", "/api/v1/capabilities/mcp/"+url.PathEscape(r.PathValue("id"))+"/state")
 }
-
 func (s *Server) restDeleteMcpAdmin(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := s.store.DeleteMcp(id, "", "platform"); err != nil {
-		slog.Error("delete mcp server", "error", err)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "mcp server not found"})
-		return
-	}
-	s.emitCapabilitiesChanged("mcp")
-	s.recordAudit(r, "capabilities.mcp.delete", "mcp", id, nil)
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+	s.forwardToAdmin(w, r, "DELETE", "/api/v1/capabilities/mcp/"+url.PathEscape(r.PathValue("id")))
 }
 
 // ======== MCP connection test ========
@@ -335,18 +262,11 @@ func (s *Server) testMcp(w http.ResponseWriter, r *http.Request, owner string) {
 		"protocol_version": result.ProtocolVersion,
 	})
 }
-
 func (s *Server) restTestMcpAdmin(w http.ResponseWriter, r *http.Request) {
-	s.testMcp(w, r, "")
+	s.forwardToAdmin(w, r, "POST", "/api/v1/capabilities/mcp/test")
 }
-
 func (s *Server) restTestMcpMy(w http.ResponseWriter, r *http.Request) {
-	userID := userIDFromQuery(r)
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	s.testMcp(w, r, userID)
+	s.forwardToAdmin(w, r, "POST", "/api/v1/user/capabilities/library/mcp/test?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
 
 // ======== admin: skills ========
@@ -424,95 +344,17 @@ func (s *Server) restDeleteSkillAdmin(w http.ResponseWriter, r *http.Request) {
 func userIDFromQuery(r *http.Request) string {
 	return r.URL.Query().Get("user_id")
 }
-
 func (s *Server) restListMyMcp(w http.ResponseWriter, r *http.Request) {
-	userID := userIDFromQuery(r)
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	recs, err := s.store.ListMcpServers(userID)
-	if err != nil {
-		slog.Error("list my mcp servers", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	out := make([]nanoprotocol.McpServerDef, 0, len(recs))
-	for _, rec := range recs {
-		def := maskMcp(mcpserverDef(rec))
-		out = append(out, def)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"servers": out, "count": len(out)})
+	s.forwardToAdmin(w, r, "GET", "/api/v1/user/capabilities/library/mcp?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
-
 func (s *Server) restCreateMyMcp(w http.ResponseWriter, r *http.Request) {
-	userID := userIDFromQuery(r)
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	var body mcpBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if body.Name == "" || body.Transport == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and transport are required"})
-		return
-	}
-	rec := body.record("user", userID)
-	if err := s.store.CreateMcp(rec); err != nil {
-		slog.Error("create my mcp server", "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	s.emitCapabilitiesChanged("mcp")
-	s.recordAudit(r, "capabilities.mcp.create", "mcp", rec.ID, map[string]any{"user_id": userID})
-	writeJSON(w, http.StatusCreated, map[string]string{"id": rec.ID, "status": "created"})
+	s.forwardToAdmin(w, r, "POST", "/api/v1/user/capabilities/library/mcp?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
-
 func (s *Server) restUpdateMyMcp(w http.ResponseWriter, r *http.Request) {
-	userID, id := userIDFromQuery(r), r.PathValue("id")
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	rec, err := s.store.GetMcpServer(id)
-	if err != nil || rec == nil || rec.Scope != "user" || rec.OwnerUserID != userID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "mcp server not found"})
-		return
-	}
-	var body mcpBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	upd := body.record("user", userID)
-	upd.ID = id
-	preserveMaskedHeaders(upd.Headers, rec.Headers)
-	if err := s.store.UpdateMcp(id, upd); err != nil {
-		slog.Error("update my mcp server", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	s.emitCapabilitiesChanged("mcp")
-	s.recordAudit(r, "capabilities.mcp.update", "mcp", id, map[string]any{"user_id": userID})
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+	s.forwardToAdmin(w, r, "PUT", "/api/v1/user/capabilities/library/mcp/"+url.PathEscape(r.PathValue("id"))+"?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
-
 func (s *Server) restDeleteMyMcp(w http.ResponseWriter, r *http.Request) {
-	userID, id := userIDFromQuery(r), r.PathValue("id")
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	if err := s.store.DeleteMcp(id, userID, "user"); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "mcp server not found"})
-		return
-	}
-	s.emitCapabilitiesChanged("mcp")
-	s.recordAudit(r, "capabilities.mcp.delete", "mcp", id, map[string]any{"user_id": userID})
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+	s.forwardToAdmin(w, r, "DELETE", "/api/v1/user/capabilities/library/mcp/"+url.PathEscape(r.PathValue("id"))+"?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
 func (s *Server) restListMySkills(w http.ResponseWriter, r *http.Request) {
 	s.forwardToAdmin(w, r, "GET", "/api/v1/user/capabilities/library/skills?user_id="+url.QueryEscape(userIDFromQuery(r)))
@@ -738,9 +580,13 @@ func (s *Server) restSetAgentCapability(w http.ResponseWriter, r *http.Request) 
 	if typeID == "" {
 		typeID = s.store.DefaultModeTypeID(agentID)
 	}
-	if err := s.store.SetModeCapability(agentID, typeID, body.Kind, body.Ref, body.Enabled); err != nil {
+	// The override document is the admin module's; this service decided what the
+	// caller meant (owner, mode, visibility) and forwards the write.
+	if err := s.adminPost("/api/v1/internal/agents/"+url.PathEscape(agentID)+"/capabilities", map[string]any{
+		"type_id": typeID, "kind": body.Kind, "ref": body.Ref, "enabled": body.Enabled,
+	}, nil); err != nil {
 		slog.Error("set agent capability", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
 		return
 	}
 	s.emitCapabilitiesChanged(body.Kind)
@@ -773,9 +619,11 @@ func (s *Server) restDeleteAgentCapability(w http.ResponseWriter, r *http.Reques
 	if typeID == "" {
 		typeID = s.store.DefaultModeTypeID(agentID)
 	}
-	if err := s.store.DeleteModeCapability(agentID, typeID, kind, ref); err != nil {
+	if err := s.adminPost("/api/v1/internal/agents/"+url.PathEscape(agentID)+"/capabilities/delete", map[string]any{
+		"type_id": typeID, "kind": kind, "ref": ref,
+	}, nil); err != nil {
 		slog.Error("delete agent capability", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
 		return
 	}
 	s.emitCapabilitiesChanged(kind)

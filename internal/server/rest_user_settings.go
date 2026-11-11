@@ -28,9 +28,12 @@ func (s *Server) restUserSkillAck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "skill_id is required"})
 		return
 	}
-	if err := s.store.AckSkill(userID, body.SkillID, body.Version); err != nil {
+	// The catalogue (and its acknowledgements) is the admin module's.
+	if err := s.adminPost("/api/v1/internal/skills/ack", map[string]any{
+		"user_id": userID, "skill_id": body.SkillID, "version": body.Version,
+	}, nil); err != nil {
 		slog.Error("ack skill", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
 		return
 	}
 	s.recordAudit(r, "capabilities.skill.ack", "skill", body.SkillID, map[string]any{"user_id": userID, "version": body.Version})
