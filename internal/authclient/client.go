@@ -215,3 +215,261 @@ func (c *Client) UnlinkOAuth(ctx context.Context, userID, provider string) error
 	path := "/internal/v1/users/" + url.PathEscape(userID) + "/oauth-links/" + url.PathEscape(provider)
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
+
+// ======== accounts ========
+
+// ResolvedAccount is onboarding's answer.
+type ResolvedAccount struct {
+	UserID    string `json:"user_id"`
+	BindingID int64  `json:"binding_id"`
+	IsNew     bool   `json:"is_new"`
+}
+
+// ErrChannelDisabled reports a channel an administrator switched off; the inbound
+// path answers the sender with that.
+var ErrChannelDisabled = errors.New("channel disabled")
+
+// Account is one account as the console reads it.
+type Account struct {
+	UserID             string `json:"user_id"`
+	DisplayName        string `json:"display_name"`
+	Email              string `json:"email"`
+	Role               string `json:"role"`
+	Status             string `json:"status"`
+	Tier               string `json:"tier"`
+	MustChangePassword bool   `json:"must_change_password"`
+	PreferredLanguage  string `json:"preferred_language"`
+}
+
+// AccountPatch names the fields a request may change; nil means "not mentioned".
+type AccountPatch struct {
+	Status            *string `json:"status"`
+	Role              *string `json:"role"`
+	Tier              *string `json:"tier"`
+	DisplayName       *string `json:"display_name"`
+	Email             *string `json:"email"`
+	PreferredLanguage *string `json:"preferred_language"`
+}
+
+// ResolveAccount is onboarding: whose account is this identity, creating one if
+// nobody's.
+func (c *Client) ResolveAccount(ctx context.Context, channel, senderID string) (ResolvedAccount, error) {
+	body, err := json.Marshal(map[string]string{"channel": channel, "sender_id": senderID})
+	if err != nil {
+		return ResolvedAccount{}, err
+	}
+	var out ResolvedAccount
+	err = c.do(ctx, http.MethodPost, "/internal/v1/accounts/resolve", bytes.NewReader(body), &out)
+	if status, ok := err.(*StatusError); ok && status.Status == http.StatusConflict {
+		return ResolvedAccount{}, ErrChannelDisabled
+	}
+	return out, err
+}
+
+// RegisterAccount creates an account (or refreshes its display name).
+func (c *Client) RegisterAccount(ctx context.Context, userID, displayName string) error {
+	body, err := json.Marshal(map[string]string{"user_id": userID, "display_name": displayName})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/internal/v1/accounts", bytes.NewReader(body), nil)
+}
+
+// LinkChannel links one platform identity to an account.
+func (c *Client) LinkChannel(ctx context.Context, userID, channel, senderID string) error {
+	body, err := json.Marshal(map[string]string{"channel": channel, "sender_id": senderID})
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/internal/v1/accounts/"+url.PathEscape(userID)+"/channels", bytes.NewReader(body), nil)
+}
+
+// Account reads one account by id.
+func (c *Client) Account(ctx context.Context, userID string) (*Account, error) {
+	var out Account
+	if err := c.do(ctx, http.MethodGet, "/internal/v1/accounts/"+url.PathEscape(userID), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// AccountByEmail reads one account by address.
+func (c *Client) AccountByEmail(ctx context.Context, email string) (*Account, error) {
+	var out Account
+	path := "/internal/v1/accounts?email=" + url.QueryEscape(email)
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) listAccounts(ctx context.Context, query string) ([]Account, error) {
+	var payload struct {
+		Accounts []Account `json:"accounts"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/internal/v1/accounts?"+query, nil, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Accounts == nil {
+		payload.Accounts = []Account{}
+	}
+	return payload.Accounts, nil
+}
+
+// ListAccounts is the console's page.
+func (c *Client) ListAccounts(ctx context.Context, includeDeleted bool, limit int) ([]Account, error) {
+	query := "limit=" + url.QueryEscape(fmt.Sprint(limit))
+	if includeDeleted {
+		query += "&include_deleted=1"
+	}
+	return c.listAccounts(ctx, query)
+}
+
+// SearchAccounts is the console's search box.
+func (c *Client) SearchAccounts(ctx context.Context, q string, limit int) ([]Account, error) {
+	return c.listAccounts(ctx, "q="+url.QueryEscape(q)+"&limit="+url.QueryEscape(fmt.Sprint(limit)))
+}
+
+// AllUserIDs is the set of every account id.
+func (c *Client) AllUserIDs(ctx context.Context) ([]string, error) {
+	var payload struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/internal/v1/accounts?ids_only=1", nil, &payload); err != nil {
+		return nil, err
+	}
+	if payload.UserIDs == nil {
+		payload.UserIDs = []string{}
+	}
+	return payload.UserIDs, nil
+}
+
+// PatchAccount changes the fields the patch mentions.
+func (c *Client) PatchAccount(ctx context.Context, userID string, patch AccountPatch) error {
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPatch, "/internal/v1/accounts/"+url.PathEscape(userID), bytes.NewReader(body), nil)
+}
+
+// PasswordHash reads the stored credential.
+func (c *Client) PasswordHash(ctx context.Context, userID string) (string, error) {
+	var payload struct {
+		Hash string `json:"password_hash"`
+	}
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/password"
+	if err := c.do(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return "", err
+	}
+	return payload.Hash, nil
+}
+
+// SetPassword writes the credential. keepFlag keeps the "must change" flag as it
+// is, which is what a password the person chose themselves does.
+func (c *Client) SetPassword(ctx context.Context, userID, hash string, mustChange, keepFlag bool) error {
+	body, err := json.Marshal(map[string]any{
+		"password_hash": hash, "must_change_password": mustChange, "keep_flag": keepFlag,
+	})
+	if err != nil {
+		return err
+	}
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/password"
+	return c.do(ctx, http.MethodPut, path, bytes.NewReader(body), nil)
+}
+
+// ClaimBootstrapAdmin takes the one-shot administrator hand-out.
+func (c *Client) ClaimBootstrapAdmin(ctx context.Context, userID string) (bool, error) {
+	var payload struct {
+		Claimed bool `json:"claimed"`
+	}
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/bootstrap-admin"
+	if err := c.do(ctx, http.MethodPost, path, bytes.NewReader([]byte("{}")), &payload); err != nil {
+		return false, err
+	}
+	return payload.Claimed, nil
+}
+
+// ReleaseBootstrapAdmin gives the hand-out back after a failed claim.
+func (c *Client) ReleaseBootstrapAdmin(ctx context.Context, userID string) error {
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/bootstrap-admin"
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// Channels lists an account's channel names.
+func (c *Client) Channels(ctx context.Context, userID string) ([]string, error) {
+	var payload struct {
+		Channels []string `json:"channels"`
+	}
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/channels"
+	if err := c.do(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Channels == nil {
+		payload.Channels = []string{}
+	}
+	return payload.Channels, nil
+}
+
+// SetChannel enables or disables one channel of one account.
+func (c *Client) SetChannel(ctx context.Context, userID, channel string, enabled bool) error {
+	body, err := json.Marshal(map[string]bool{"enabled": enabled})
+	if err != nil {
+		return err
+	}
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/channels/" + url.PathEscape(channel)
+	return c.do(ctx, http.MethodPatch, path, bytes.NewReader(body), nil)
+}
+
+// AccountInfo is the runtime's question about one account.
+func (c *Client) AccountInfo(ctx context.Context, userID string) (string, string, error) {
+	var payload struct {
+		Status string `json:"status"`
+		Tier   string `json:"tier"`
+	}
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/info"
+	if err := c.do(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return "", "", err
+	}
+	return payload.Status, payload.Tier, nil
+}
+
+// AccountCounts is the console's overview.
+func (c *Client) AccountCounts(ctx context.Context) (int, int, map[string]int, error) {
+	var payload struct {
+		Active int            `json:"active"`
+		Admins int            `json:"admins"`
+		Tiers  map[string]int `json:"tiers"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/internal/v1/accounts/counts", nil, &payload); err != nil {
+		return 0, 0, nil, err
+	}
+	if payload.Tiers == nil {
+		payload.Tiers = map[string]int{}
+	}
+	return payload.Active, payload.Admins, payload.Tiers, nil
+}
+
+// UserExists reports whether an account exists.
+func (c *Client) UserExists(ctx context.Context, userID string) (bool, error) {
+	var payload struct {
+		Exists bool `json:"exists"`
+	}
+	path := "/internal/v1/accounts/" + url.PathEscape(userID) + "/exists"
+	if err := c.do(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return false, err
+	}
+	return payload.Exists, nil
+}
+
+// BindingOwner answers whose binding id this is.
+func (c *Client) BindingOwner(ctx context.Context, bindingID int64) (string, error) {
+	var payload struct {
+		UserID string `json:"user_id"`
+	}
+	path := "/internal/v1/bindings/" + url.PathEscape(fmt.Sprint(bindingID)) + "/account"
+	if err := c.do(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return "", err
+	}
+	return payload.UserID, nil
+}

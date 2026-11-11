@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,16 +33,34 @@ func wireServer(t *testing.T, opts ...ServerOption) *Server {
 // so it does not need a database at all.
 func testServerMongo(t *testing.T) *Server {
 	t.Helper()
-	s := NewServer(storetest.Connect(t))
+	st := storetest.Connect(t)
+	s := NewServer(st)
 	// The account surface belongs to nanoauth now, so a server under test needs a
-	// stand-in for it; the empty answers are enough for the tests that only read a
-	// page of accounts (they ask "does this person sign in through the directory").
+	// stand-in for it: an in-memory backend for the rows, and a stub for the
+	// directory roster the user list asks about.
+	fake := storetest.NewFakeAccounts()
+	st.SetAccountBackend(fake)
 	s.auth = emptyAuthStub(t)
+	accountFakes.Store(s, fake)
 	return s
 }
 
 // emptyAuthStub answers the two link reads with nothing linked. It is deliberately
 // minimal: a test whose subject is a link uses the client's own tests.
+// accountFakes maps a server under test to its in-memory account backend, so a test
+// can assert on accounts without reaching into the store's wiring.
+var accountFakes sync.Map
+
+// fakeAccountsFor returns the backend a server under test was built with.
+func fakeAccountsFor(t *testing.T, s *Server) *storetest.FakeAccounts {
+	t.Helper()
+	fake, ok := accountFakes.Load(s)
+	if !ok {
+		t.Fatal("this server has no account backend")
+	}
+	return fake.(*storetest.FakeAccounts)
+}
+
 func emptyAuthStub(t *testing.T) *authclient.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

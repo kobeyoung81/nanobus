@@ -13,12 +13,13 @@ import (
 // belongs to nobody, and the next module to need it would write it too.
 func TestCollectionNamesCarryTheirModulePrefix(t *testing.T) {
 	owned := map[string][]string{
-		"auth_":        {usersCollection},
+		// No auth_ collection is written here any more: the account domain moved
+		// to the auth service, which is where those names are asserted now.
 		"admin_":       {agentTypesCollection, agentTypeOverridesCollection, modelsCollection, modelProvidersCollection, builtinToolsCollection, mcpServersCollection, skillsCollection, userSkillAcksCollection, sessionHeadPromptsCollection},
 		"portal_":      {agentsCollection, agentGroupsCollection, bindingAgentsCollection},
 		"bus_":         {inboundQueueCollection, outboundQueueCollection, wechatKFSyncStateCollection},
 		"provisioner_": {containerRequestsCollection, runnersCollection},
-		"sys_":         {systemFlagsCollection, countersCollection, migrationsCollection},
+		"sys_":         {countersCollection, migrationsCollection},
 	}
 	for prefix, names := range owned {
 		for _, name := range names {

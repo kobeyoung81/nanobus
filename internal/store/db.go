@@ -27,6 +27,12 @@ type Store struct {
 	// readOnlyKeys supplies the permission catalog's read-only keys. They live
 	// in the admin module; the bus asks over HTTP.
 	readOnlyKeys func() (map[string]nanoprotocol.PermissionAction, error)
+	// accounts is the account domain's owner — the auth module. The bus keeps no
+	// handle for `auth_users`; it asks (accounts_remote.go).
+	accounts AccountBackend
+	// containers is the provisioning queue, which onboarding asks for a new
+	// account's container.
+	containers ContainerEnqueuer
 }
 
 // Open connects to MongoDB and returns a Store. It pings the server so a bad URI

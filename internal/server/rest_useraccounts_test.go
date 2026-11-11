@@ -2,14 +2,11 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 )
@@ -41,10 +38,7 @@ func accountRequest(t *testing.T, s *Server, method, target string, body any) *h
 
 func setRole(t *testing.T, s *Server, userID, role string) {
 	t.Helper()
-	if _, err := s.store.DB().Collection("auth_users").UpdateOne(context.Background(),
-		bson.D{{Key: "_id", Value: userID}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "role", Value: role}}}},
-	); err != nil {
+	if err := s.store.SetUserRole(userID, role); err != nil {
 		t.Fatalf("set role: %v", err)
 	}
 }
@@ -256,14 +250,11 @@ func TestRestUserPassword(t *testing.T) {
 		t.Fatalf("hash = %q", hash)
 	}
 	// The forced-change flag travelled with it.
-	var doc struct {
-		MustChange bool `bson:"must_change_password"`
-	}
-	if err := srv.store.DB().Collection("auth_users").
-		FindOne(context.Background(), bson.D{{Key: "_id", Value: "u-1"}}).Decode(&doc); err != nil {
+	account, err := srv.store.GetUserAccount("u-1")
+	if err != nil {
 		t.Fatalf("read user: %v", err)
 	}
-	if !doc.MustChange {
+	if !account.MustChangePassword {
 		t.Fatal("must_change_password was not stored")
 	}
 
@@ -285,13 +276,11 @@ func TestRestSearchUserAccounts(t *testing.T) {
 	seed := func(id, name, email string, binding int64) {
 		t.Helper()
 		storetest.SeedUser(t, srv.store, id, "free", binding)
-		if _, err := srv.store.DB().Collection("auth_users").UpdateOne(context.Background(),
-			bson.D{{Key: "_id", Value: id}},
-			bson.D{{Key: "$set", Value: bson.D{
-				{Key: "display_name", Value: name},
-				{Key: "email", Value: email},
-			}}}); err != nil {
-			t.Fatalf("seed identity %s: %v", id, err)
+		if err := srv.store.SetUserDisplayName(id, name); err != nil {
+			t.Fatalf("seed name %s: %v", id, err)
+		}
+		if err := srv.store.SetUserEmail(id, email); err != nil {
+			t.Fatalf("seed email %s: %v", id, err)
 		}
 	}
 	seed("u-1", "林岚", "linlan@example.com", 1)

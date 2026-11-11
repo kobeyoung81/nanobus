@@ -9,8 +9,10 @@ import (
 	"strings"
 	"syscall"
 
+	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/config"
 	buslog "gitee.com/kobeyoung81/nanobus/internal/log"
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanobus/internal/server"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	migrationsmongo "gitee.com/kobeyoung81/nanobus/migrations-mongo"
@@ -50,6 +52,12 @@ for gateway and agent connections.`,
 				return fmt.Errorf("open database: %w", err)
 			}
 			defer s.Close()
+
+			// The account domain is the auth service's: the store asks it for every
+			// account read and write, and the provisioning queue is asked by
+			// onboarding when it creates an account.
+			s.SetAccountBackend(store.NewRemoteAccounts(authclient.New(cfg.Nanoauth.BaseURL, cfg.InternalToken)))
+			s.SetContainerEnqueuer(provisionerclient.New(cfg.Provisioner.BaseURL, cfg.InternalToken))
 
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),

@@ -158,6 +158,12 @@ func SeedUser(t *testing.T, s *store.Store, userID, tier string, bindingID int64
 // request names a channel of its own.
 func SeedUserChannel(t *testing.T, s *store.Store, userID, tier, channel, senderID string, bindingID int64) {
 	t.Helper()
+	// When the store is wired to the in-memory account backend, the seeded account
+	// belongs there: the bus no longer keeps `auth_users` itself.
+	if fake, ok := s.AccountBackend().(*FakeAccounts); ok {
+		fake.Seed(userID, tier, channel, senderID, bindingID)
+		return
+	}
 	now := time.Now().UTC()
 	if _, err := s.DB().Collection("auth_users").InsertOne(context.Background(), bson.D{
 		{Key: "_id", Value: userID},
