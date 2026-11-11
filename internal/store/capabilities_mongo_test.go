@@ -9,6 +9,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -160,69 +161,6 @@ func TestDeleteMcp_ScopeDecidesTheFilter(t *testing.T) {
 
 // ======== skills ========
 
-func TestCreateSkill_AppliesTheDefaults(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateSkill(store.SkillRecord{
-		Capability: store.Capability{ID: "skill:a", Scope: "platform", Name: "a", DefaultEnabled: true},
-		Files:      map[string]string{"SKILL.md": "body"},
-	}); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-
-	rec, err := s.GetSkill("skill:a")
-	if err != nil {
-		t.Fatalf("GetSkill: %v", err)
-	}
-	if rec.Origin != "human" || rec.Status != "published" || rec.Version != 1 || rec.PublishedVersion != 1 {
-		t.Fatalf("defaults not applied: %+v", rec)
-	}
-	if rec.Files["SKILL.md"] != "body" {
-		t.Fatalf("files lost: %+v", rec.Files)
-	}
-}
-
-// TestCreateSkill_NameIsGloballyUnique pins migration 050's unique key: a name is
-// taken once, by anyone.
-func TestCreateSkill_NameIsGloballyUnique(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateSkill(skillFixture("skill:a", "platform", "", "shared-name")); err != nil {
-		t.Fatalf("first: %v", err)
-	}
-	if err := s.CreateSkill(skillFixture("skill:b", "user", "u-1", "shared-name")); err == nil {
-		t.Fatal("a duplicate skill name was accepted: the unique index is missing")
-	}
-}
-
-// TestSkillNameTaken_PlatformNamesAreReserved: the seeder asks this before it
-// inserts, and it must treat a platform name as taken for everybody.
-func TestSkillNameTaken_PlatformNamesAreReserved(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateSkill(skillFixture("skill:platform", "platform", "", "busy")); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-	if taken, err := s.SkillNameTaken("busy", "u-1", ""); err != nil || !taken {
-		t.Fatalf("a platform name should be taken for u-1: %v (err %v)", taken, err)
-	}
-
-	// Another user's skill does not reserve the name for this one.
-	if err := s.CreateSkill(skillFixture("skill:theirs", "user", "u-2", "theirs")); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-	if taken, err := s.SkillNameTaken("theirs", "u-1", ""); err != nil || taken {
-		t.Fatalf("another user's name should be free for u-1: %v (err %v)", taken, err)
-	}
-	if taken, err := s.SkillNameTaken("theirs", "u-2", ""); err != nil || !taken {
-		t.Fatalf("the owner's own name should be taken: %v (err %v)", taken, err)
-	}
-	// Excluding the skill itself makes its name free again.
-	if taken, err := s.SkillNameTaken("theirs", "u-2", "skill:theirs"); err != nil || taken {
-		t.Fatalf("excluding the skill should free its name: %v (err %v)", taken, err)
-	}
-}
-
 func TestListSkills_ScopeAndOrder(t *testing.T) {
 	s := storetest.Connect(t)
 
@@ -232,9 +170,7 @@ func TestListSkills_ScopeAndOrder(t *testing.T) {
 		skillFixture("skill:m", "user", "u-1", "mine"),
 		skillFixture("skill:t", "user", "u-2", "theirs"),
 	} {
-		if err := s.CreateSkill(rec); err != nil {
-			t.Fatalf("CreateSkill(%s): %v", rec.ID, err)
-		}
+		seedSkillDoc(t, s, rec)
 	}
 
 	skills, err := s.ListSkills("u-1")
@@ -259,9 +195,7 @@ func TestListSkills_ScopeAndOrder(t *testing.T) {
 func TestGetUserSkillByName(t *testing.T) {
 	s := storetest.Connect(t)
 
-	if err := s.CreateSkill(skillFixture("skill:mine", "user", "u-1", "mine")); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
+	seedSkillDoc(t, s, skillFixture("skill:mine", "user", "u-1", "mine"))
 	rec, err := s.GetUserSkillByName("u-1", "mine")
 	if err != nil {
 		t.Fatalf("GetUserSkillByName: %v", err)
@@ -272,80 +206,6 @@ func TestGetUserSkillByName(t *testing.T) {
 	// Another user's skill, and a platform one, are not this user's.
 	if _, err := s.GetUserSkillByName("u-2", "mine"); err == nil {
 		t.Fatal("expected an error for another user's skill")
-	}
-}
-
-func TestUpdateSkill_AndStateAreSeparate(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateSkill(skillFixture("skill:mine", "user", "u-1", "mine")); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-	updated := skillFixture("skill:mine", "user", "u-1", "mine2")
-	updated.Description = "new"
-	updated.Files = map[string]string{"SKILL.md": "new body"}
-	updated.Version = 3
-	updated.PublishedVersion = 3
-	updated.ContentHash = "hash"
-	updated.CreatedBy = "u-1"
-	if err := s.UpdateSkill("skill:mine", updated); err != nil {
-		t.Fatalf("UpdateSkill: %v", err)
-	}
-
-	rec, err := s.GetSkill("skill:mine")
-	if err != nil {
-		t.Fatalf("GetSkill: %v", err)
-	}
-	if rec.Name != "mine2" || rec.Files["SKILL.md"] != "new body" || rec.Version != 3 || rec.CreatedBy != "u-1" {
-		t.Fatalf("the update did not land: %+v", rec)
-	}
-
-	// Clearing created_by unsets it rather than storing an empty string
-	// (NULLIF(?, '')).
-	cleared := updated
-	cleared.CreatedBy = ""
-	if err := s.UpdateSkill("skill:mine", cleared); err != nil {
-		t.Fatalf("UpdateSkill: %v", err)
-	}
-	if rec, err = s.GetSkill("skill:mine"); err != nil {
-		t.Fatalf("GetSkill: %v", err)
-	}
-	if rec.CreatedBy != "" {
-		t.Fatalf("created_by was not cleared: %+v", rec)
-	}
-
-	// The state write leaves the content alone — including for a bundled skill,
-	// whose content is not editable at all.
-	on := true
-	if err := s.UpdateSkillState("skill:mine", &on, nil); err != nil {
-		t.Fatalf("UpdateSkillState: %v", err)
-	}
-	rec, err = s.GetSkill("skill:mine")
-	if err != nil {
-		t.Fatalf("GetSkill: %v", err)
-	}
-	if !rec.DefaultEnabled || rec.Name != "mine2" {
-		t.Fatalf("state write disturbed the content: %+v", rec)
-	}
-	if err := s.UpdateSkillState("skill:ghost", &on, nil); err == nil {
-		t.Fatal("expected an error for a missing skill")
-	}
-}
-
-func TestDeleteSkill_ScopeDecidesTheFilter(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateSkill(skillFixture("skill:mine", "user", "u-1", "mine")); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
-	if err := s.DeleteSkill("skill:mine", "u-2", "user"); err == nil {
-		t.Fatal("another user deleted someone else's skill")
-	}
-	if err := s.DeleteSkill("skill:mine", "u-1", "user"); err != nil {
-		t.Fatalf("the owner could not delete: %v", err)
-	}
-	if err := s.DeleteSkill("skill:mine", "", "platform"); err == nil {
-		t.Fatal("expected an error for a missing skill")
 	}
 }
 
@@ -472,9 +332,7 @@ func TestCapabilityVisible(t *testing.T) {
 	if err := s.CreateMcp(mcpFixture("mcp:mine", "user", "u-1", "Mine")); err != nil {
 		t.Fatalf("CreateMcp: %v", err)
 	}
-	if err := s.CreateSkill(skillFixture("skill:platform", "platform", "", "shared")); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
+	seedSkillDoc(t, s, skillFixture("skill:platform", "platform", "", "shared"))
 
 	cases := []struct {
 		kind, ref, user string
@@ -540,5 +398,23 @@ func seedBuiltinTool(t *testing.T, s *store.Store, id string) {
 		{Key: "_id", Value: id}, {Key: "description", Value: ""}, {Key: "default_enabled", Value: true},
 	}); err != nil {
 		t.Fatalf("seed builtin tool %s: %v", id, err)
+	}
+}
+
+// seedSkillDoc writes a catalogue row directly: creating skills is the admin
+// module's write now, and these tests only need the rows to exist.
+func seedSkillDoc(t *testing.T, s *store.Store, rec store.SkillRecord) {
+	t.Helper()
+	if _, err := s.DB().Collection("admin_skills").InsertOne(context.Background(), bson.D{
+		{Key: "_id", Value: rec.ID}, {Key: "scope", Value: rec.Scope},
+		{Key: "owner_user_id", Value: rec.OwnerUserID}, {Key: "name", Value: rec.Name},
+		{Key: "description", Value: rec.Description}, {Key: "files", Value: rec.Files},
+		{Key: "default_enabled", Value: rec.DefaultEnabled}, {Key: "locked", Value: rec.Locked},
+		{Key: "origin", Value: rec.Origin}, {Key: "version", Value: rec.Version},
+		{Key: "status", Value: rec.Status}, {Key: "published_version", Value: rec.PublishedVersion},
+		{Key: "content_hash", Value: rec.ContentHash},
+		{Key: "created_at", Value: time.Now().UTC()}, {Key: "updated_at", Value: time.Now().UTC()},
+	}); err != nil {
+		t.Fatalf("seed skill %s: %v", rec.ID, err)
 	}
 }

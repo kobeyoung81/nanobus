@@ -58,9 +58,7 @@ func TestResolveCapabilities_VisibleSkipsOtherUsers(t *testing.T) {
 		skillFixture("skill:mine", "user", "u-1", "mine"),
 		skillFixture("skill:theirs", "user", "u-2", "theirs"),
 	} {
-		if err := s.CreateSkill(rec); err != nil {
-			t.Fatalf("CreateSkill(%s): %v", rec.ID, err)
-		}
+		seedSkillDoc(t, s, rec)
 	}
 
 	resp, err := s.ResolveCapabilities("agent-1")
@@ -110,13 +108,11 @@ func TestResolveCapabilities_SkillUpdateAvailability(t *testing.T) {
 	// The bundled-id format, spelled here: the seeder that defines it is the
 	// admin module's now, and the read only needs a row that looks like its output.
 	id := "skill:bundled-weather"
-	if err := s.CreateSkill(store.SkillRecord{
+	seedSkillDoc(t, s, store.SkillRecord{
 		Capability: store.Capability{ID: id, Scope: "platform", Name: "weather", DefaultEnabled: true},
 		Files:      map[string]string{"SKILL.md": "body"},
 		Origin:     "bundled", Status: "published", Version: 2, PublishedVersion: 2,
-	}); err != nil {
-		t.Fatalf("CreateSkill: %v", err)
-	}
+	})
 
 	// Unacknowledged: the badge is not shown for a version never seen.
 	resp, err := s.ResolveCapabilities("agent-1")
