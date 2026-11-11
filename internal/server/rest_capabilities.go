@@ -536,9 +536,13 @@ func (s *Server) restSetAgentPermissions(w http.ResponseWriter, r *http.Request)
 	if typeID == "" {
 		typeID = s.store.DefaultModeTypeID(agentID)
 	}
-	if err := s.store.SetModePermissions(agentID, typeID, body.Permissions); err != nil {
+	// The rules live in the override document, which the admin module owns; this
+	// service decided whose agent and which mode it is, and forwards the list.
+	if err := s.adminPost("/api/v1/internal/agents/"+url.PathEscape(agentID)+"/permissions", map[string]any{
+		"type_id": typeID, "permissions": body.Permissions,
+	}, nil); err != nil {
 		slog.Error("set agent permissions", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
 		return
 	}
 	s.emitCapabilitiesChanged("permissions")

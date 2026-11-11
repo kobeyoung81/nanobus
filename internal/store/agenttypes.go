@@ -890,39 +890,6 @@ func (s *Store) GetModePermissions(agentID, typeID string) ([]nanoprotocol.Permi
 	return ov.Permissions, nil
 }
 
-// AppendModePermission adds or replaces one permission rule on an (agent, mode).
-func (s *Store) AppendModePermission(agentID, typeID string, rule nanoprotocol.PermissionRule) error {
-	rules, err := s.GetModePermissions(agentID, typeID)
-	if err != nil {
-		return err
-	}
-	found := false
-	for i := range rules {
-		if rules[i].Pattern == rule.Pattern {
-			rules[i].Action = rule.Action
-			found = true
-		}
-	}
-	if !found {
-		rules = append(rules, rule)
-	}
-	return s.SetModePermissions(agentID, typeID, rules)
-}
-
-// SetModePermissions replaces the override permission rules for an (agent, mode).
-// Read-only validation happens in SetAgentTypeOverride.
-func (s *Store) SetModePermissions(agentID, typeID string, rules []nanoprotocol.PermissionRule) error {
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil {
-		return err
-	}
-	if ov == nil {
-		ov = &nanoprotocol.AgentTypeOverride{}
-	}
-	ov.Permissions = rules
-	return s.SetAgentTypeOverride(agentID, typeID, *ov)
-}
-
 // ======== helpers ========
 
 func defaultStr(v, def string) string {

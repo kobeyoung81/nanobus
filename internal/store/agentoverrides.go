@@ -7,7 +7,6 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
@@ -110,55 +109,6 @@ func (s *Store) ListAgentTypeOverrides(agentID string) (map[string]nanoprotocol.
 		out[doc.TypeID] = *doc.override()
 	}
 	return out, cur.Err()
-}
-
-// SetAgentTypeOverride upserts the override for one (agent, type) pair. The
-// permission rules are validated against the read-only key catalog.
-func (s *Store) SetAgentTypeOverride(agentID, typeID string, ov nanoprotocol.AgentTypeOverride) error {
-	if agentID == "" || typeID == "" {
-		return fmt.Errorf("agent_id and type_id are required")
-	}
-	if len(ov.Permissions) > 0 {
-		if err := s.validateReadOnlyRules(ov.Permissions); err != nil {
-			return err
-		}
-	}
-
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// Every field is written, empty ones included: the SQL's upsert took the
-	// values from the statement, so an override with no settings *cleared* the
-	// stored ones rather than leaving them.
-	set := bson.D{
-		{Key: "thinking", Value: ov.Thinking},
-		{Key: "settings", Value: ov.Settings},
-		{Key: "permissions", Value: storedPermissionRules(ov.Permissions)},
-		{Key: "capabilities", Value: storedCapabilityAttachments(ov.Capabilities)},
-		{Key: "updated_at", Value: time.Now().UTC()},
-	}
-	var update bson.D
-	if ov.ModelID == 0 {
-		// A zero model id was NULLIF(?, 0) — absent, not a model 0 that nothing
-		// would resolve.
-		update = bson.D{
-			{Key: "$set", Value: set},
-			{Key: "$unset", Value: bson.D{{Key: "model_id", Value: ""}}},
-		}
-	} else {
-		update = bson.D{{Key: "$set", Value: append(set,
-			bson.E{Key: "model_id", Value: ov.ModelID})}}
-	}
-
-	err := retryOnDuplicateUpsert(func() error {
-		_, err := s.db.Collection(agentTypeOverridesCollection).UpdateOne(ctx,
-			overrideIdentity(agentID, typeID), update, options.UpdateOne().SetUpsert(true))
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("set agent type override: %w", err)
-	}
-	return nil
 }
 
 func storedCapabilityAttachments(caps []nanoprotocol.CapabilityAttachment) []storedCapabilityAttachment {

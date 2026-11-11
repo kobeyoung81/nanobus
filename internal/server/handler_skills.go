@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -94,11 +95,13 @@ func (s *Server) handleSetAgentPermission(msg nanoprotocol.Message) *nanoprotoco
 	if typeID == "" {
 		typeID = s.store.DefaultModeTypeID(req.AgentID)
 	}
-	for _, rule := range req.Permissions {
-		if err := s.store.AppendModePermission(req.AgentID, typeID, rule); err != nil {
-			resp := nanoprotocol.NewErrorMessage("set agent permission: " + err.Error())
-			return &resp
-		}
+	// One rule at a time, appended to the mode's override — the document is the
+	// admin module's, so the write goes there.
+	if err := s.adminPost("/api/v1/internal/agents/"+url.PathEscape(req.AgentID)+"/permissions", map[string]any{
+		"type_id": typeID, "permissions": req.Permissions, "append": true,
+	}, nil); err != nil {
+		resp := nanoprotocol.NewErrorMessage("set agent permission: " + err.Error())
+		return &resp
 	}
 	s.emitCapabilitiesChanged("permissions")
 	resp, _ := nanoprotocol.NewMessage(nanoprotocol.TypeAgentPermissionSet, map[string]string{
@@ -125,6 +128,16 @@ func validSkillName(name string) bool {
 
 // adminPost posts a JSON body to the admin module and decodes the answer.
 func (s *Server) adminPost(path string, body, out any) error {
+	return s.adminSend(http.MethodPost, path, body, out)
+}
+
+// adminPut is adminPost with the method the console's mode form uses.
+func (s *Server) adminPut(path string, body, out any) error {
+	return s.adminSend(http.MethodPut, path, body, out)
+}
+
+// adminSend posts a JSON body to the admin module and decodes the answer.
+func (s *Server) adminSend(method, path string, body, out any) error {
 	if s.admin == nil || !s.admin.Enabled() {
 		return fmt.Errorf("the admin module is not configured")
 	}
@@ -134,7 +147,7 @@ func (s *Server) adminPost(path string, body, out any) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	status, data, err := s.admin.Do(ctx, http.MethodPost, path, bytes.NewReader(payload), "application/json")
+	status, data, err := s.admin.Do(ctx, method, path, bytes.NewReader(payload), "application/json")
 	if err != nil {
 		return err
 	}

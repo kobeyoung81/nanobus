@@ -519,49 +519,6 @@ func (s *Store) ListModeCapabilities(agentID, typeID string) ([]nanoprotocol.Cap
 	return ov.Capabilities, nil
 }
 
-// SetModeCapability upserts one capability override for an (agent, mode).
-func (s *Store) SetModeCapability(agentID, typeID, kind, ref string, enabled bool) error {
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil {
-		return err
-	}
-	if ov == nil {
-		ov = &nanoprotocol.AgentTypeOverride{}
-	}
-	k := nanoprotocol.CapabilityKind(kind)
-	found := false
-	for i := range ov.Capabilities {
-		if ov.Capabilities[i].Kind == k && ov.Capabilities[i].Ref == ref {
-			ov.Capabilities[i].Enabled = enabled
-			found = true
-			break
-		}
-	}
-	if !found {
-		ov.Capabilities = append(ov.Capabilities, nanoprotocol.CapabilityAttachment{Kind: k, Ref: ref, Enabled: enabled})
-	}
-	return s.SetAgentTypeOverride(agentID, typeID, *ov)
-}
-
-// DeleteModeCapability removes one capability override for an (agent, mode),
-// reverting the item to the type baseline.
-func (s *Store) DeleteModeCapability(agentID, typeID, kind, ref string) error {
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil || ov == nil {
-		return err
-	}
-	k := nanoprotocol.CapabilityKind(kind)
-	kept := ov.Capabilities[:0]
-	for _, c := range ov.Capabilities {
-		if c.Kind == k && c.Ref == ref {
-			continue
-		}
-		kept = append(kept, c)
-	}
-	ov.Capabilities = kept
-	return s.SetAgentTypeOverride(agentID, typeID, *ov)
-}
-
 // DefaultModeTypeID returns the agent's default session type (or its primary
 // type, or the platform default).
 func (s *Store) DefaultModeTypeID(agentID string) string {

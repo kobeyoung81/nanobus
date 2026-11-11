@@ -4,8 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-
-	"gitee.com/kobeyoung81/nanoprotocol"
+	"net/url"
 )
 
 // restGetAgentMode returns one mode's baseline type and the user's override.
@@ -76,28 +75,18 @@ func (s *Server) restSetAgentMode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported thinking level"})
 		return
 	}
-	ov, err := s.store.GetAgentTypeOverride(agentID, typeID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	if ov == nil {
-		ov = &nanoprotocol.AgentTypeOverride{}
-	}
-	if body.ClearModelID {
-		ov.ModelID = 0
-	} else if body.ModelID != nil {
-		ov.ModelID = *body.ModelID
-	}
-	if body.Thinking != nil {
-		ov.Thinking = *body.Thinking
-	}
-	if body.Settings != nil {
-		ov.Settings = *body.Settings
-	}
-	if err := s.store.SetAgentTypeOverride(agentID, typeID, *ov); err != nil {
+	// The override document is the admin module's; this service decided whose
+	// agent and which mode it is, and forwards the patch. The merge happens
+	// there, in one place, against the stored document.
+	if err := s.adminPut("/api/v1/internal/agents/"+url.PathEscape(agentID)+"/modes/"+url.PathEscape(typeID),
+		map[string]any{
+			"model_id":       body.ModelID,
+			"clear_model_id": body.ClearModelID,
+			"thinking":       body.Thinking,
+			"settings":       body.Settings,
+		}, nil); err != nil {
 		slog.Error("set agent mode override", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
 		return
 	}
 	s.emitAgentSettingsChanged(agentID)
