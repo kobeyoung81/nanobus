@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
+	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/middleware"
 	"gitee.com/kobeyoung81/nanobus/internal/portalclient"
 	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
@@ -28,6 +29,7 @@ type Server struct {
 	listener          net.Listener
 	srv               *http.Server
 	nanoauthURL       string
+	auth              *authclient.Client
 	admin             *adminclient.Client
 	portal            *portalclient.Client
 	provisioner       *provisionerclient.Client
@@ -93,6 +95,15 @@ type ServerOption func(*Server)
 func WithNanoauthURL(url string) ServerOption {
 	return func(s *Server) {
 		s.nanoauthURL = url
+	}
+}
+
+// WithAuthURL sets the same base URL for the internal account surface. The two
+// differ in what they address, not where: the proxy forwards a user's token, the
+// client presents the platform's shared one.
+func WithAuthURL(url, token string) ServerOption {
+	return func(s *Server) {
+		s.auth = authclient.New(url, token)
 	}
 }
 

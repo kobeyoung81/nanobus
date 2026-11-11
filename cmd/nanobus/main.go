@@ -53,6 +53,7 @@ for gateway and agent connections.`,
 
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
+				server.WithAuthURL(cfg.Nanoauth.BaseURL, cfg.InternalToken),
 				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
 				server.WithPortalURL(cfg.Portal.BaseURL, cfg.InternalToken),
 				server.WithProvisionerURL(cfg.Provisioner.BaseURL, cfg.InternalToken),

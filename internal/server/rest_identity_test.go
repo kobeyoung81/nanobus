@@ -75,41 +75,6 @@ func TestRestOAuthLinks_Lifecycle(t *testing.T) {
 	}
 }
 
-func TestRestGitShortcuts_Lifecycle(t *testing.T) {
-	s := testServerMongo(t)
-
-	code, body := call(t, s, http.MethodPost, "/api/v1/users/u-1/git-shortcuts",
-		`{"agent_id":"agent-1","path":"src/main.go","label":"main"}`)
-	if code != http.StatusOK {
-		t.Fatalf("star: %d %s", code, body)
-	}
-	var shortcut struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(body), &shortcut); err != nil {
-		t.Fatalf("decode shortcut: %v", err)
-	}
-	if shortcut.ID == 0 {
-		t.Fatalf("the response carried no id: %s", body)
-	}
-
-	if code, body = call(t, s, http.MethodGet, "/api/v1/users/u-1/git-shortcuts?agent_id=agent-1", ""); code != http.StatusOK ||
-		!strings.Contains(body, "src/main.go") {
-		t.Fatalf("list: %d %s", code, body)
-	}
-	if code, body = call(t, s, http.MethodGet, "/api/v1/users/u-1/git-shortcuts?agent_id=other", ""); code != http.StatusOK ||
-		strings.Contains(body, "src/main.go") {
-		t.Fatalf("agent filter leaked: %d %s", code, body)
-	}
-
-	if code, body = call(t, s, http.MethodDelete, "/api/v1/users/u-1/git-shortcuts/"+itoa(shortcut.ID), ""); code != http.StatusOK {
-		t.Fatalf("delete: %d %s", code, body)
-	}
-	if code, _ = call(t, s, http.MethodDelete, "/api/v1/users/u-1/git-shortcuts/"+itoa(shortcut.ID), ""); code != http.StatusNotFound {
-		t.Fatalf("deleting twice should be 404, got %d", code)
-	}
-}
-
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
 func TestRestRefreshTokens_Lifecycle(t *testing.T) {

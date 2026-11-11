@@ -4,26 +4,30 @@
       "indexes": [
         {
           "name": "provider_identity_unique",
-          "keys": [["provider", 1], ["provider_id", 1]],
+          "keys": [
+            [
+              "provider",
+              1
+            ],
+            [
+              "provider_id",
+              1
+            ]
+          ],
           "unique": true
         },
         {
           "name": "user_provider",
-          "keys": [["user_id", 1], ["provider", 1]]
-        }
-      ]
-    },
-    "auth_git_shortcuts": {
-      "indexes": [
-        {
-          "name": "path_unique",
-          "keys": [["user_id", 1], ["agent_id", 1], ["path", 1]],
-          "unique": true
-        },
-        {
-          "name": "user_created",
-          "keys": [["user_id", 1], ["created_at", -1]],
-          "unique": false
+          "keys": [
+            [
+              "user_id",
+              1
+            ],
+            [
+              "provider",
+              1
+            ]
+          ]
         }
       ]
     },
@@ -31,11 +35,21 @@
       "indexes": [
         {
           "name": "user_tokens",
-          "keys": [["user_id", 1]]
+          "keys": [
+            [
+              "user_id",
+              1
+            ]
+          ]
         },
         {
           "name": "expires_at",
-          "keys": [["expires_at", 1]]
+          "keys": [
+            [
+              "expires_at",
+              1
+            ]
+          ]
         }
       ]
     }

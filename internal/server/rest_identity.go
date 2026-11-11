@@ -3,11 +3,13 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 )
 
@@ -118,29 +120,26 @@ func (s *Server) restUnlinkOAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "unlinked"})
 }
 
-// gitShortcutJSON is one starred path. The id is the row's own (an auto-increment
-// number the source table had), so the console's delete-by-id is unchanged.
-func gitShortcutJSON(shortcut store.GitShortcut) map[string]any {
-	return map[string]any{
-		"id":       shortcut.ID,
-		"user_id":  shortcut.UserID,
-		"agent_id": shortcut.AgentID,
-		"path":     shortcut.Path,
-		"label":    shortcut.Label,
-	}
-}
+// A user's starred git paths are identity's, so nanoauth owns the rows; these
+// three handlers keep the console's endpoints and forward them.
 
 func (s *Server) restListGitShortcuts(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
-	shortcuts, err := s.store.GitShortcuts(userID, r.URL.Query().Get("agent_id"))
+	shortcuts, err := s.auth.GitShortcuts(r.Context(), userID, r.URL.Query().Get("agent_id"))
 	if err != nil {
 		slog.Error("list git shortcuts", "user_id", userID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeAuthFailure(w, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(shortcuts))
 	for _, shortcut := range shortcuts {
-		out = append(out, gitShortcutJSON(shortcut))
+		out = append(out, map[string]any{
+			"id":       shortcut.ID,
+			"user_id":  shortcut.UserID,
+			"agent_id": shortcut.AgentID,
+			"path":     shortcut.Path,
+			"label":    shortcut.Label,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"shortcuts": out})
 }
@@ -156,13 +155,19 @@ func (s *Server) restAddGitShortcut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	shortcut, err := s.store.SaveGitShortcut(userID, body.AgentID, body.Path, body.Label)
+	shortcut, err := s.auth.SaveGitShortcut(r.Context(), userID, body.AgentID, body.Path, body.Label)
 	if err != nil {
 		slog.Error("save git shortcut", "user_id", userID, "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, gitShortcutJSON(shortcut))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":       shortcut.ID,
+		"user_id":  shortcut.UserID,
+		"agent_id": shortcut.AgentID,
+		"path":     shortcut.Path,
+		"label":    shortcut.Label,
+	})
 }
 
 func (s *Server) restDeleteGitShortcut(w http.ResponseWriter, r *http.Request) {
@@ -172,11 +177,27 @@ func (s *Server) restDeleteGitShortcut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id must be a number"})
 		return
 	}
-	if err := s.store.DeleteGitShortcut(userID, id); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	if err := s.auth.DeleteGitShortcut(r.Context(), userID, id); err != nil {
+		if errors.Is(err, authclient.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("shortcut %d not found", id)})
+			return
+		}
+		slog.Error("delete git shortcut", "user_id", userID, "error", err)
+		writeAuthFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
+}
+
+// writeAuthFailure answers with nanoauth's own rejection when the request was the
+// problem, and reports an unavailable auth module otherwise.
+func writeAuthFailure(w http.ResponseWriter, err error) {
+	var rejected *authclient.StatusError
+	if errors.As(err, &rejected) && rejected.Status < http.StatusInternalServerError {
+		writeJSON(w, rejected.Status, map[string]string{"error": rejected.Body})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the auth module is unavailable"})
 }
 
 // restSaveRefreshToken stores a session ticket. The hash is what the client
