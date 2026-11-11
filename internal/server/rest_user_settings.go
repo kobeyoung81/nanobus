@@ -52,10 +52,12 @@ func (s *Server) restListUserSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := r.PathValue("kind")
 	ref := r.PathValue("ref")
-	vals, err := s.store.ListUserSecrets(userID, kind, ref)
+	// The rows are identity's; the masking below stays here, because it is the
+	// browser's view of them.
+	vals, err := s.auth.UserSecrets(r.Context(), userID, kind, ref)
 	if err != nil {
 		slog.Error("list user secrets", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeAuthFailure(w, err)
 		return
 	}
 	masked := map[string]string{}
@@ -91,9 +93,9 @@ func (s *Server) restSetUserSecret(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid capability kind"})
 		return
 	}
-	if err := s.store.UpsertUserSecret(userID, kind, ref, body.Key, body.Value); err != nil {
+	if err := s.auth.SetUserSecret(r.Context(), userID, kind, ref, body.Key, body.Value); err != nil {
 		slog.Error("set user secret", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeAuthFailure(w, err)
 		return
 	}
 	s.recordAudit(r, "capabilities.secret.set", kind, ref, map[string]any{"user_id": userID, "key": body.Key})
@@ -113,9 +115,9 @@ func (s *Server) restDeleteUserSecret(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
 		return
 	}
-	if err := s.store.DeleteUserSecret(userID, kind, ref, key); err != nil {
+	if err := s.auth.DeleteUserSecret(r.Context(), userID, kind, ref, key); err != nil {
 		slog.Error("delete user secret", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeAuthFailure(w, err)
 		return
 	}
 	s.recordAudit(r, "capabilities.secret.delete", kind, ref, map[string]any{"user_id": userID, "key": key})

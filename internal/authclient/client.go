@@ -130,3 +130,36 @@ func (c *Client) DeleteGitShortcut(ctx context.Context, userID string, id int64)
 	path := "/internal/v1/users/" + url.PathEscape(userID) + "/git-shortcuts/" + url.PathEscape(fmt.Sprint(id))
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
+
+// UserSecrets returns the stored secret values for one capability. They are for
+// the platform's own use: the console masks them before a person sees them.
+func (c *Client) UserSecrets(ctx context.Context, userID, kind, ref string) (map[string]string, error) {
+	path := "/internal/v1/users/" + url.PathEscape(userID) + "/secrets/" + url.PathEscape(kind) + "/" + url.PathEscape(ref)
+	var payload struct {
+		Secrets map[string]string `json:"secrets"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Secrets == nil {
+		payload.Secrets = map[string]string{}
+	}
+	return payload.Secrets, nil
+}
+
+// SetUserSecret stores (or replaces) one secret value.
+func (c *Client) SetUserSecret(ctx context.Context, userID, kind, ref, key, value string) error {
+	body, err := json.Marshal(map[string]string{"key": key, "value": value})
+	if err != nil {
+		return err
+	}
+	path := "/internal/v1/users/" + url.PathEscape(userID) + "/secrets/" + url.PathEscape(kind) + "/" + url.PathEscape(ref)
+	return c.do(ctx, http.MethodPut, path, bytes.NewReader(body), nil)
+}
+
+// DeleteUserSecret removes one secret value.
+func (c *Client) DeleteUserSecret(ctx context.Context, userID, kind, ref, key string) error {
+	path := "/internal/v1/users/" + url.PathEscape(userID) + "/secrets/" + url.PathEscape(kind) + "/" + url.PathEscape(ref) +
+		"?key=" + url.QueryEscape(key)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}

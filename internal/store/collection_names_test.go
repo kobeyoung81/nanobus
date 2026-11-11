@@ -13,7 +13,7 @@ import (
 // belongs to nobody, and the next module to need it would write it too.
 func TestCollectionNamesCarryTheirModulePrefix(t *testing.T) {
 	owned := map[string][]string{
-		"auth_":        {usersCollection, oauthProvidersCollection, refreshTokensCollection, userSecretsCollection},
+		"auth_":        {usersCollection, oauthProvidersCollection, refreshTokensCollection},
 		"admin_":       {agentTypesCollection, agentTypeOverridesCollection, modelsCollection, modelProvidersCollection, builtinToolsCollection, mcpServersCollection, skillsCollection, userSkillAcksCollection, sessionHeadPromptsCollection},
 		"portal_":      {agentsCollection, agentGroupsCollection, bindingAgentsCollection},
 		"bus_":         {inboundQueueCollection, outboundQueueCollection, wechatKFSyncStateCollection},
