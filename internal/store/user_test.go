@@ -466,18 +466,8 @@ func TestMigrations_DeclareUserIndexes(t *testing.T) {
 	// Uniqueness itself, not just the key order: these two *are* the constraints.
 	assertIndexUnique(t, s.DB().Collection("auth_users"), "channel_identity_unique")
 	assertIndexUnique(t, s.DB().Collection("auth_users"), "binding_id_unique")
-	// A unique index that skips documents without a binding is the MongoDB form
-	// of MySQL's UNIQUE-permitting-many-NULLs (migration 055).
-	assertIndexKeys(t, s.DB().Collection("provisioner_container_requests"), "binding_unique", [][2]any{
-		{"binding_id", int32(1)},
-	})
-	assertIndexUnique(t, s.DB().Collection("provisioner_container_requests"), "binding_unique")
-	assertIndexKeys(t, s.DB().Collection("provisioner_container_requests"), "status_created", [][2]any{
-		{"status", int32(1)}, {"created_at", int32(1)},
-	})
-	assertIndexKeys(t, s.DB().Collection("provisioner_container_requests"), "user_binding", [][2]any{
-		{"user_id", int32(1)}, {"binding_id", int32(1)},
-	})
+	// The container-request indexes moved to the module that writes that
+	// collection; its own manifest and tests declare and assert them.
 }
 
 // The identity and administration fields the portal used to own in its own SQL

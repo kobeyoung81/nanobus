@@ -1,12 +1,10 @@
 package store
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
@@ -120,49 +118,6 @@ func skillAckIdentity(userID, skillID string) bson.D {
 	}
 }
 
-// AckSkill records that a user acknowledged a platform skill version.
-func (s *Store) AckSkill(userID, skillID string, version int) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// $max is the whole of `GREATEST(acked_version, VALUES(acked_version))`, and
-	// it is atomic on its own: an acknowledgement that arrives out of order
-	// cannot lower the recorded version.
-	err := retryOnDuplicateUpsert(func() error {
-		_, err := s.db.Collection(userSkillAcksCollection).UpdateOne(ctx,
-			skillAckIdentity(userID, skillID),
-			bson.D{
-				{Key: "$max", Value: bson.D{{Key: "acked_version", Value: version}}},
-				{Key: "$set", Value: bson.D{{Key: "updated_at", Value: time.Now().UTC()}}},
-			},
-			options.UpdateOne().SetUpsert(true))
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("ack skill: %w", err)
-	}
-	return nil
-}
-
-// SkillAckVersion returns the acknowledged version for (user, skill), or 0.
-func (s *Store) SkillAckVersion(userID, skillID string) (int, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	var doc struct {
-		AckedVersion int `bson:"acked_version"`
-	}
-	err := s.db.Collection(userSkillAcksCollection).FindOne(ctx,
-		skillAckIdentity(userID, skillID)).Decode(&doc)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get skill ack: %w", err)
-	}
-	return doc.AckedVersion, nil
-}
-
 // skillAckMap returns all acknowledged versions for a user keyed by skill id.
 func (s *Store) skillAckMap(userID string) (map[string]int, error) {
 	ctx, cancel := opCtx()
@@ -184,25 +139,4 @@ func (s *Store) skillAckMap(userID string) (map[string]int, error) {
 		out[doc.SkillID] = doc.AckedVersion
 	}
 	return out, cur.Err()
-}
-
-// GetUserSkillByName returns a user-scoped skill owned by userID, else ErrNotFound.
-func (s *Store) GetUserSkillByName(userID, name string) (*SkillRecord, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	var doc storedSkill
-	err := s.db.Collection(skillsCollection).FindOne(ctx, bson.D{
-		{Key: "scope", Value: "user"},
-		{Key: "owner_user_id", Value: userID},
-		{Key: "name", Value: name},
-	}).Decode(&doc)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, errCapNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get skill by name: %w", err)
-	}
-	rec := doc.record()
-	return &rec, nil
 }

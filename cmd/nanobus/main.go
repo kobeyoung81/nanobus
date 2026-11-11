@@ -2,22 +2,18 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
-	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/config"
 	buslog "gitee.com/kobeyoung81/nanobus/internal/log"
 	"gitee.com/kobeyoung81/nanobus/internal/server"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	migrationsmongo "gitee.com/kobeyoung81/nanobus/migrations-mongo"
-	"gitee.com/kobeyoung81/nanoprotocol"
 	"github.com/spf13/cobra"
 )
 
@@ -55,25 +51,6 @@ for gateway and agent connections.`,
 			}
 			defer s.Close()
 
-			// The permission catalog lives in the admin module; the policy checks
-			// in the store ask it through this provider.
-			admin := adminclient.New(cfg.Admin.BaseURL, cfg.InternalToken)
-			s.SetReadOnlyPermissionKeySource(func() (map[string]nanoprotocol.PermissionAction, error) {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				keys, err := admin.PermissionKeys(ctx)
-				if err != nil {
-					return nil, err
-				}
-				out := make(map[string]nanoprotocol.PermissionAction, len(keys))
-				for _, k := range keys {
-					if k.ReadOnly {
-						out[k.ID] = k.DefaultAction
-					}
-				}
-				return out, nil
-			})
-
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
 				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
@@ -104,7 +81,6 @@ for gateway and agent connections.`,
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "path to bus config file")
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newUserCmd(&configPath))
-	rootCmd.AddCommand(newMcpCmd(&configPath))
 	rootCmd.AddCommand(newMigrateCmd(&configPath))
 
 	if err := rootCmd.Execute(); err != nil {
@@ -206,70 +182,6 @@ func openStore(configPath *string) (*store.Store, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 	return store.Open(cfg.Database.URI)
-}
-
-func newMcpCmd(configPath *string) *cobra.Command {
-	mcpCmd := &cobra.Command{
-		Use:   "mcp",
-		Short: "Manage the platform MCP server catalog",
-	}
-	mcpCmd.AddCommand(newMcpSeedCmd(configPath))
-	return mcpCmd
-}
-
-func newMcpSeedCmd(configPath *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "seed",
-		Short: "Seed the first-party MCP servers this binary ships",
-		Long: `Inserts the platform's own MCP servers (today: nanoartifacts). An existing
-row is left exactly as it is: URL, headers and defaults are admin-editable, and
-re-running this on every deploy must not undo those edits. Safe to re-run.
-
-The seeded row carries the shared internal token as its Authorization header,
-read from NANOSEC_BUS_INTERNAL_TOKEN — the agent runtime sends catalog headers
-verbatim, so the token has to live with the entry. Rotating that token therefore
-needs this row updated; the seeder will not overwrite it.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			token := strings.TrimSpace(os.Getenv("NANOSEC_BUS_INTERNAL_TOKEN"))
-			if token == "" {
-				return fmt.Errorf("NANOSEC_BUS_INTERNAL_TOKEN is required to seed the MCP row")
-			}
-			endpoint := strings.TrimSpace(os.Getenv("NANOARTIFACTS_MCP_URL"))
-			if endpoint == "" {
-				endpoint = "http://nanoartifacts:8080/mcp"
-			}
-
-			s, err := openStore(configPath)
-			if err != nil {
-				return err
-			}
-			defer s.Close()
-
-			inserted, err := s.SeedMcpServer(store.McpServerRecord{
-				Capability: store.Capability{
-					ID:          "mcp:platform-nanoartifacts",
-					Scope:       "platform",
-					Name:        "artifacts",
-					Description: "NanoArtifacts — platform work library (publish, list, share)",
-					// Opt-in like every other tool this binary ships: a new
-					// server must not silently widen what an agent can do.
-					DefaultEnabled: false,
-				},
-				Transport: "http",
-				URL:       endpoint,
-				Headers:   map[string]string{"Authorization": "Bearer " + token},
-			})
-			if err != nil {
-				return fmt.Errorf("seed mcp servers: %w", err)
-			}
-			if inserted {
-				fmt.Printf("Seeded MCP server %q -> %s\n", "artifacts", endpoint)
-			} else {
-				fmt.Printf("MCP server %q already present; left unchanged.\n", "artifacts")
-			}
-			return nil
-		},
-	}
 }
 
 func newMigrateCmd(configPath *string) *cobra.Command {

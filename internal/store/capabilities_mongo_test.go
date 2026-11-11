@@ -13,7 +13,6 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"gitee.com/kobeyoung81/nanobus/internal/agenttypes"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 )
@@ -38,124 +37,6 @@ func skillFixture(id, scope, owner, name string) store.SkillRecord {
 		},
 		Files:  map[string]string{"SKILL.md": "body"},
 		Origin: "human",
-	}
-}
-
-// ======== builtin tools ========
-
-// ======== mcp servers ========
-
-func TestCreateMcp_ScopesAndLists(t *testing.T) {
-	s := storetest.Connect(t)
-
-	for _, rec := range []store.McpServerRecord{
-		mcpFixture("mcp:platform", "platform", "", "Shared"),
-		mcpFixture("mcp:mine", "user", "u-1", "Mine"),
-		mcpFixture("mcp:theirs", "user", "u-2", "Theirs"),
-	} {
-		if err := s.CreateMcp(rec); err != nil {
-			t.Fatalf("CreateMcp(%s): %v", rec.ID, err)
-		}
-	}
-
-	servers, err := s.ListMcpServers("u-1")
-	if err != nil {
-		t.Fatalf("ListMcpServers: %v", err)
-	}
-	// Platform + own, ordered by name, and another user's is absent.
-	if len(servers) != 2 || servers[0].ID != "mcp:mine" || servers[1].ID != "mcp:platform" {
-		t.Fatalf("unexpected list: %+v", servers)
-	}
-	if servers[0].Headers["X-Api-Key"] != "k" {
-		t.Fatalf("headers lost: %+v", servers[0])
-	}
-
-	rec, err := s.GetMcpServer("mcp:platform")
-	if err != nil {
-		t.Fatalf("GetMcpServer: %v", err)
-	}
-	if rec == nil || rec.Name != "Shared" || rec.Scope != "platform" {
-		t.Fatalf("unexpected record: %+v", rec)
-	}
-	if _, err := s.GetMcpServer("mcp:ghost"); err == nil {
-		t.Fatal("expected an error for a missing server")
-	}
-}
-
-// TestCreateMcp_RefusesADuplicateNameForTheSameOwner pins ensureMcpNameFree,
-// which is what stands in for a unique key this catalog never had.
-func TestCreateMcp_RefusesADuplicateNameForTheSameOwner(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateMcp(mcpFixture("mcp:mine", "user", "u-1", "Same")); err != nil {
-		t.Fatalf("first: %v", err)
-	}
-	if err := s.CreateMcp(mcpFixture("mcp:other", "user", "u-1", "Same")); err == nil {
-		t.Fatal("a duplicate name for the same user was accepted")
-	}
-	// Another user may use the name.
-	if err := s.CreateMcp(mcpFixture("mcp:theirs", "user", "u-2", "Same")); err != nil {
-		t.Fatalf("another user's server was refused: %v", err)
-	}
-}
-
-func TestUpdateMcp_ReplacesAndUpdatesState(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateMcp(mcpFixture("mcp:mine", "user", "u-1", "Old")); err != nil {
-		t.Fatalf("CreateMcp: %v", err)
-	}
-	updated := mcpFixture("mcp:mine", "user", "u-1", "New")
-	updated.URL = "http://elsewhere:2"
-	updated.Headers = map[string]string{"X-Other": "v"}
-	if err := s.UpdateMcp("mcp:mine", updated); err != nil {
-		t.Fatalf("UpdateMcp: %v", err)
-	}
-
-	rec, err := s.GetMcpServer("mcp:mine")
-	if err != nil {
-		t.Fatalf("GetMcpServer: %v", err)
-	}
-	if rec.Name != "New" || rec.URL != "http://elsewhere:2" || rec.Headers["X-Other"] != "v" {
-		t.Fatalf("the update did not land: %+v", rec)
-	}
-
-	off := false
-	if err := s.UpdateMcpState("mcp:mine", &off, nil); err != nil {
-		t.Fatalf("UpdateMcpState: %v", err)
-	}
-	rec, err = s.GetMcpServer("mcp:mine")
-	if err != nil {
-		t.Fatalf("GetMcpServer: %v", err)
-	}
-	if rec.DefaultEnabled {
-		t.Fatalf("state not written: %+v", rec)
-	}
-	if rec.Name != "New" {
-		t.Fatalf("a state write touched the content: %+v", rec)
-	}
-	if err := s.UpdateMcpState("mcp:ghost", &off, nil); err == nil {
-		t.Fatal("expected an error for a missing server")
-	}
-}
-
-// TestDeleteMcp_ScopeDecidesTheFilter: a user-scoped delete only removes the
-// caller's own row; the admin path (scope != "user") removes whatever the id
-// names.
-func TestDeleteMcp_ScopeDecidesTheFilter(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if err := s.CreateMcp(mcpFixture("mcp:mine", "user", "u-1", "Mine")); err != nil {
-		t.Fatalf("CreateMcp: %v", err)
-	}
-	if err := s.DeleteMcp("mcp:mine", "u-2", "user"); err == nil {
-		t.Fatal("another user deleted someone else's server")
-	}
-	if err := s.DeleteMcp("mcp:mine", "u-1", "user"); err != nil {
-		t.Fatalf("the owner could not delete: %v", err)
-	}
-	if err := s.DeleteMcp("mcp:mine", "", "platform"); err == nil {
-		t.Fatal("expected an error for a missing server")
 	}
 }
 
@@ -189,23 +70,6 @@ func TestListSkills_ScopeAndOrder(t *testing.T) {
 		if names[i] != want[i] {
 			t.Fatalf("expected %v, got %v", want, names)
 		}
-	}
-}
-
-func TestGetUserSkillByName(t *testing.T) {
-	s := storetest.Connect(t)
-
-	seedSkillDoc(t, s, skillFixture("skill:mine", "user", "u-1", "mine"))
-	rec, err := s.GetUserSkillByName("u-1", "mine")
-	if err != nil {
-		t.Fatalf("GetUserSkillByName: %v", err)
-	}
-	if rec.ID != "skill:mine" {
-		t.Fatalf("unexpected skill: %+v", rec)
-	}
-	// Another user's skill, and a platform one, are not this user's.
-	if _, err := s.GetUserSkillByName("u-2", "mine"); err == nil {
-		t.Fatal("expected an error for another user's skill")
 	}
 }
 
@@ -249,61 +113,6 @@ func TestUserSecrets_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestAckSkill_KeepsTheHighestVersion pins GREATEST(): an acknowledgement that
-// arrives out of order must not lower the recorded version.
-func TestAckSkill_KeepsTheHighestVersion(t *testing.T) {
-	s := storetest.Connect(t)
-
-	if version, err := s.SkillAckVersion("u-1", "skill:a"); err != nil || version != 0 {
-		t.Fatalf("an unacknowledged skill should read 0: %d (err %v)", version, err)
-	}
-
-	if err := s.AckSkill("u-1", "skill:a", 3); err != nil {
-		t.Fatalf("AckSkill: %v", err)
-	}
-	if err := s.AckSkill("u-1", "skill:a", 1); err != nil {
-		t.Fatalf("AckSkill: %v", err)
-	}
-	if version, err := s.SkillAckVersion("u-1", "skill:a"); err != nil || version != 3 {
-		t.Fatalf("version = %d, want 3 (err %v)", version, err)
-	}
-	// A later acknowledgement moves it forward.
-	if err := s.AckSkill("u-1", "skill:a", 5); err != nil {
-		t.Fatalf("AckSkill: %v", err)
-	}
-	if version, err := s.SkillAckVersion("u-1", "skill:a"); err != nil || version != 5 {
-		t.Fatalf("version = %d, want 5 (err %v)", version, err)
-	}
-	// Another user's acknowledgement is separate.
-	if version, err := s.SkillAckVersion("u-2", "skill:a"); err != nil || version != 0 {
-		t.Fatalf("another user's ack leaked: %d (err %v)", version, err)
-	}
-}
-
-func TestMigrations_DeclareCapabilityIndexes(t *testing.T) {
-	s := storetest.Connect(t)
-
-	// A skill name is unique globally (migration 050).
-	assertIndexKeys(t, s.DB().Collection("admin_skills"), "name_unique", [][2]any{{"name", int32(1)}})
-	assertIndexUnique(t, s.DB().Collection("admin_skills"), "name_unique")
-	// The list queries filter (scope, owner) and order by name.
-	assertIndexKeys(t, s.DB().Collection("admin_skills"), "scope_owner_name", [][2]any{
-		{"scope", int32(1)}, {"owner_user_id", int32(1)}, {"name", int32(1)},
-	})
-	assertIndexKeys(t, s.DB().Collection("admin_mcp_servers"), "scope_owner_name", [][2]any{
-		{"scope", int32(1)}, {"owner_user_id", int32(1)}, {"name", int32(1)},
-	})
-	// The two per-user tables keep their primary keys as unique indexes.
-	assertIndexKeys(t, s.DB().Collection("auth_secrets"), "identity_unique", [][2]any{
-		{"user_id", int32(1)}, {"capability_kind", int32(1)}, {"ref", int32(1)}, {"secret_key", int32(1)},
-	})
-	assertIndexUnique(t, s.DB().Collection("auth_secrets"), "identity_unique")
-	assertIndexKeys(t, s.DB().Collection("admin_user_skill_acks"), "user_skill_unique", [][2]any{
-		{"user_id", int32(1)}, {"skill_id", int32(1)},
-	})
-	assertIndexUnique(t, s.DB().Collection("admin_user_skill_acks"), "user_skill_unique")
-}
-
 // TestUserSecret_IdentityIsUnique pins the four-field unique index a secret's
 // identity rests on: two upserts of the same secret must end as one row.
 func TestUserSecret_IdentityIsUnique(t *testing.T) {
@@ -329,8 +138,13 @@ func TestCapabilityVisible(t *testing.T) {
 	s := storetest.Connect(t)
 
 	seedBuiltinTool(t, s, "shell")
-	if err := s.CreateMcp(mcpFixture("mcp:mine", "user", "u-1", "Mine")); err != nil {
-		t.Fatalf("CreateMcp: %v", err)
+	// Creating an MCP server is the admin module's write; this test only needs
+	// the row visible to one owner.
+	if _, err := s.DB().Collection("admin_mcp_servers").InsertOne(context.Background(), bson.D{
+		{Key: "_id", Value: "mcp:mine"}, {Key: "scope", Value: "user"},
+		{Key: "owner_user_id", Value: "u-1"}, {Key: "name", Value: "Mine"},
+	}); err != nil {
+		t.Fatalf("seed mcp server: %v", err)
 	}
 	seedSkillDoc(t, s, skillFixture("skill:platform", "platform", "", "shared"))
 
@@ -353,39 +167,6 @@ func TestCapabilityVisible(t *testing.T) {
 		}
 		if got != c.want {
 			t.Fatalf("CapabilityVisible(%s, %s, %s) = %v, want %v", c.kind, c.ref, c.user, got, c.want)
-		}
-	}
-}
-
-// TestCreateMcp_CompletesTheRestrictedBelts is the same rule for 081: an MCP
-// server is inherited by default, so the read-only roles have to refuse it out
-// loud, or their profiles never register as read-only.
-func TestCreateMcp_CompletesTheRestrictedBelts(t *testing.T) {
-	s := storetest.Connect(t)
-	if _, err := s.SeedAgentTypes(agenttypes.Definitions()); err != nil {
-		t.Fatalf("SeedAgentTypes: %v", err)
-	}
-	if err := s.CreateMcp(mcpFixture("mcp:search", "platform", "", "Search")); err != nil {
-		t.Fatalf("CreateMcp: %v", err)
-	}
-
-	for _, belt := range agenttypes.CompleteBelts() {
-		def, err := s.GetAgentType(belt.TypeID)
-		if err != nil {
-			t.Fatalf("GetAgentType(%s): %v", belt.TypeID, err)
-		}
-		found := false
-		for _, c := range def.Capabilities {
-			if string(c.Kind) != "mcp" || c.Ref != "mcp:search" {
-				continue
-			}
-			found = true
-			if c.DefaultEnabled != belt.McpEnabled {
-				t.Fatalf("%s: mcp:search = %v, want %v", belt.TypeID, c.DefaultEnabled, belt.McpEnabled)
-			}
-		}
-		if !found {
-			t.Fatalf("%s has no decision about the new MCP server: %+v", belt.TypeID, def.Capabilities)
 		}
 	}
 }

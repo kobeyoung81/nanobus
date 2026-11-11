@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
@@ -30,27 +31,53 @@ func seedAgentDoc(t *testing.T, s *store.Store, id, userID, typeID string) {
 	}
 }
 
+// seedTypeDoc writes a minimal agent type: saving one is the admin module's
+// operation now, and the resolution only reads it.
+func seedTypeDoc(t *testing.T, s *store.Store, id string) {
+	t.Helper()
+	if _, err := s.DB().Collection("admin_agent_types").InsertOne(context.Background(), bson.D{
+		{Key: "_id", Value: id}, {Key: "name", Value: id}, {Key: "role", Value: "general"},
+		{Key: "strategy", Value: "react"}, {Key: "context", Value: "windowed"},
+		{Key: "output", Value: "stream"}, {Key: "session_binding", Value: "shared"},
+	}); err != nil {
+		t.Fatalf("seed type %s: %v", id, err)
+	}
+}
+
+// seedSkillAck writes the acknowledgement row the resolution reads.
+func seedSkillAck(t *testing.T, s *store.Store, userID, skillID string, version int) {
+	t.Helper()
+	if _, err := s.DB().Collection("admin_user_skill_acks").UpdateOne(context.Background(),
+		bson.D{{Key: "user_id", Value: userID}, {Key: "skill_id", Value: skillID}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "acked_version", Value: version}}}},
+		options.UpdateOne().SetUpsert(true)); err != nil {
+		t.Fatalf("seed skill ack: %v", err)
+	}
+}
+
 func TestResolveCapabilities_VisibleSkipsOtherUsers(t *testing.T) {
 	// The type domain is in MongoDB too, and a user's catalog is resolved against
 	// their mode's definition — so the mode (and the permission catalog a save
 	// validates against) has to exist.
 	s := storetest.Connect(t)
-	seedPermissionCatalog(t, s)
 	storetest.SeedUser(t, s, "u-1", "pro", 1)
-	if err := s.SaveAgentType(agentTypeFixture("build", nil)); err != nil {
-		t.Fatalf("SaveAgentType: %v", err)
-	}
+	seedTypeDoc(t, s, "build")
 
 	seedAgentDoc(t, s, "agent-1", "u-1", "build")
 	seedBuiltinTool(t, s, "shell")
 
-	for _, rec := range []store.McpServerRecord{
-		mcpFixture("mcp:global", "platform", "", "global"),
-		mcpFixture("mcp:mine", "user", "u-1", "mine"),
-		mcpFixture("mcp:theirs", "user", "u-2", "theirs"),
+	// Creating catalog entries is the admin module's write; these rows only have
+	// to be visible to the owner or to everyone.
+	for _, row := range []struct{ id, scope, owner, name string }{
+		{"mcp:global", "platform", "", "global"},
+		{"mcp:mine", "user", "u-1", "mine"},
+		{"mcp:theirs", "user", "u-2", "theirs"},
 	} {
-		if err := s.CreateMcp(rec); err != nil {
-			t.Fatalf("CreateMcp(%s): %v", rec.ID, err)
+		if _, err := s.DB().Collection("admin_mcp_servers").InsertOne(context.Background(), bson.D{
+			{Key: "_id", Value: row.id}, {Key: "scope", Value: row.scope},
+			{Key: "owner_user_id", Value: row.owner}, {Key: "name", Value: row.name},
+		}); err != nil {
+			t.Fatalf("seed mcp server %s: %v", row.id, err)
 		}
 	}
 	for _, rec := range []store.SkillRecord{
@@ -126,10 +153,9 @@ func TestResolveCapabilities_SkillUpdateAvailability(t *testing.T) {
 		t.Fatalf("unexpected flags before an ack: %+v", resp.Skills[0])
 	}
 
-	// Acknowledged at 1, published 2 → an update is available.
-	if err := s.AckSkill("u-1", id, 1); err != nil {
-		t.Fatalf("AckSkill: %v", err)
-	}
+	// Acknowledged at 1, published 2 → an update is available. The ack is the
+	// admin module's row; this test only needs it to exist.
+	seedSkillAck(t, s, "u-1", id, 1)
 	resp, err = s.ResolveCapabilities("agent-1")
 	if err != nil {
 		t.Fatalf("ResolveCapabilities: %v", err)
@@ -139,9 +165,7 @@ func TestResolveCapabilities_SkillUpdateAvailability(t *testing.T) {
 	}
 
 	// Acknowledged at the published version → nothing to update.
-	if err := s.AckSkill("u-1", id, 2); err != nil {
-		t.Fatalf("AckSkill: %v", err)
-	}
+	seedSkillAck(t, s, "u-1", id, 2)
 	resp, err = s.ResolveCapabilities("agent-1")
 	if err != nil {
 		t.Fatalf("ResolveCapabilities: %v", err)

@@ -638,6 +638,11 @@ func (s *Server) restDeleteAgentCapability(w http.ResponseWriter, r *http.Reques
 // forwardToAdmin relays one console/user request to the module that owns the
 // catalogue, preserving the method, body and query, and passing the admin
 // module's own status back.
+// testProbeTimeout bounds one MCP reachability probe: a server that does not
+// answer within it is reported as unreachable rather than left spinning in the
+// console.
+const testProbeTimeout = 20 * time.Second
+
 func (s *Server) forwardToAdmin(w http.ResponseWriter, r *http.Request, method, path string) {
 	if s.admin == nil || !s.admin.Enabled() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "admin module is not configured"})

@@ -87,30 +87,6 @@ func (s *Store) GetAgentTypeOverride(agentID, typeID string) (*nanoprotocol.Agen
 	}
 	return doc.override(), nil
 }
-
-// ListAgentTypeOverrides returns every override for an agent keyed by type id.
-func (s *Store) ListAgentTypeOverrides(agentID string) (map[string]nanoprotocol.AgentTypeOverride, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	cur, err := s.db.Collection(agentTypeOverridesCollection).
-		Find(ctx, bson.D{{Key: "agent_id", Value: agentID}})
-	if err != nil {
-		return nil, fmt.Errorf("list agent type overrides: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	out := map[string]nanoprotocol.AgentTypeOverride{}
-	for cur.Next(ctx) {
-		var doc storedAgentTypeOverride
-		if err := cur.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("decode agent type override: %w", err)
-		}
-		out[doc.TypeID] = *doc.override()
-	}
-	return out, cur.Err()
-}
-
 func storedCapabilityAttachments(caps []nanoprotocol.CapabilityAttachment) []storedCapabilityAttachment {
 	if len(caps) == 0 {
 		return nil
@@ -120,72 +96,6 @@ func storedCapabilityAttachments(caps []nanoprotocol.CapabilityAttachment) []sto
 		out = append(out, storedCapabilityAttachment{Kind: c.Kind, Ref: c.Ref, Enabled: c.Enabled})
 	}
 	return out
-}
-
-// DeleteAgentTypeOverride clears one (agent, type) override.
-func (s *Store) DeleteAgentTypeOverride(agentID, typeID string) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	if _, err := s.db.Collection(agentTypeOverridesCollection).
-		DeleteOne(ctx, overrideIdentity(agentID, typeID)); err != nil {
-		return fmt.Errorf("delete agent type override: %w", err)
-	}
-	return nil
-}
-
-// EffectiveTypeSettings resolves the runtime settings for one (agent, type):
-// the AgentType baseline overlaid by the user override (override wins). Empty
-// values are dropped so the runtime falls back to its code defaults.
-func (s *Store) EffectiveTypeSettings(agentID, typeID string) (map[string]string, error) {
-	out := map[string]string{}
-	at, err := s.GetAgentType(typeID)
-	if err != nil {
-		return nil, err
-	}
-	if at != nil {
-		for k, v := range at.Settings {
-			if v != "" {
-				out[k] = v
-			}
-		}
-	}
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil {
-		return nil, err
-	}
-	if ov != nil {
-		for k, v := range ov.Settings {
-			if v != "" {
-				out[k] = v
-			}
-		}
-	}
-	return out, nil
-}
-
-// ResolveTypePermissions merges the type baseline, per-capability type rules,
-// and the user's per-(agent, type) override rules (last match wins).
-func (s *Store) ResolveTypePermissions(agentID, typeID string) ([]nanoprotocol.PermissionRule, error) {
-	rules := []nanoprotocol.PermissionRule{}
-	at, err := s.GetAgentType(typeID)
-	if err != nil {
-		return nil, err
-	}
-	if at != nil {
-		rules = append(rules, at.Permissions...)
-		for _, c := range at.Capabilities {
-			rules = append(rules, c.Permissions...)
-		}
-	}
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil {
-		return nil, err
-	}
-	if ov != nil {
-		rules = append(rules, ov.Permissions...)
-	}
-	return rules, nil
 }
 
 // DefaultModeModel returns the effective catalog model id for an agent's default

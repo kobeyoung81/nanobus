@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"gitee.com/kobeyoung81/nanobus/internal/agenttypes"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
@@ -103,40 +101,6 @@ func (s *Store) ListBuiltinTools() ([]nanoprotocol.BuiltinToolDef, error) {
 	return out, cur.Err()
 }
 
-// completeRestrictedBelts writes an explicit decision for every catalog entry a
-// restricted role has not decided about.
-//
-// The rule it enforces is the one 080 and 081 fixed by hand in SQL: for these
-// roles a missing row is not "inherit the catalog default" (which is on), it is
-// an unfinished decision. Rows that are already there are never touched — an
-// admin who added, removed or switched one keeps it — so this converges on the
-// first sync and then stops writing.
-func (s *Store) completeRestrictedBelts(ctx context.Context, kind string, refs []string) error {
-	if len(refs) == 0 {
-		return nil
-	}
-	for _, belt := range agenttypes.CompleteBelts() {
-		for _, ref := range refs {
-			undecided := bson.D{{Key: "_id", Value: belt.TypeID}, {Key: "capabilities", Value: bson.D{
-				{Key: "$not", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
-					{Key: "kind", Value: kind}, {Key: "ref", Value: ref},
-				}}}},
-			}}}
-			row := storedTypeCapability{
-				Kind:           nanoprotocol.CapabilityKind(kind),
-				Ref:            ref,
-				DefaultEnabled: belt.Allows(kind, ref),
-			}
-			if _, err := s.db.Collection(agentTypesCollection).UpdateOne(ctx, undecided,
-				bson.D{{Key: "$push", Value: bson.D{{Key: "capabilities", Value: row}}}},
-			); err != nil {
-				return fmt.Errorf("complete the %s belt of %s with %q: %w", kind, belt.TypeID, ref, err)
-			}
-		}
-	}
-	return nil
-}
-
 // ======== mcp servers ========
 
 const mcpServersCollection = "admin_mcp_servers"
@@ -225,136 +189,6 @@ func (s *Store) GetMcpServer(id string) (*McpServerRecord, error) {
 	rec := doc.record()
 	return &rec, nil
 }
-
-// CreateMcp inserts a new MCP server entry.
-func (s *Store) CreateMcp(rec McpServerRecord) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	if err := s.ensureMcpNameFree(rec.Id(), rec.OwnerUserID, rec.Name); err != nil {
-		return err
-	}
-
-	now := time.Now().UTC()
-	if _, err := s.db.Collection(mcpServersCollection).InsertOne(ctx, storedMcpServer{
-		ID: rec.Id(), Scope: rec.Scope, OwnerUserID: rec.OwnerUserID, Name: rec.Name,
-		Description: rec.Description, Transport: rec.Transport, URL: rec.URL,
-		Headers: rec.Headers, DefaultEnabled: rec.DefaultEnabled, Locked: rec.Locked,
-		CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		return fmt.Errorf("create mcp server: %w", err)
-	}
-	// A server every type inherits by default is exactly 081's failure: the
-	// read-only roles have to say no out loud.
-	return s.completeMcpBelts(ctx)
-}
-
-// completeMcpBelts gives every restricted role an explicit decision about every
-// configured MCP server (081's rule: the read-only roles refuse them, and an
-// MCP tool may have side effects on the far side).
-func (s *Store) completeMcpBelts(ctx context.Context) error {
-	cur, err := s.db.Collection(mcpServersCollection).Find(ctx, bson.D{},
-		options.Find().SetProjection(bson.D{{Key: "_id", Value: 1}}))
-	if err != nil {
-		return fmt.Errorf("list mcp servers: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	ids := make([]string, 0, 4)
-	for cur.Next(ctx) {
-		var doc struct {
-			ID string `bson:"_id"`
-		}
-		if err := cur.Decode(&doc); err != nil {
-			return fmt.Errorf("decode mcp server id: %w", err)
-		}
-		ids = append(ids, doc.ID)
-	}
-	if err := cur.Err(); err != nil {
-		return fmt.Errorf("list mcp servers: %w", err)
-	}
-	return s.completeRestrictedBelts(ctx, "mcp", ids)
-}
-
-// SeedMcpServer inserts a server the binary ships, leaving an existing row
-// untouched: an administrator may have changed its URL, headers or default, and
-// a deploy must not undo that. Safe to re-run.
-func (s *Store) SeedMcpServer(rec McpServerRecord) (bool, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	count, err := s.db.Collection(mcpServersCollection).CountDocuments(ctx,
-		bson.D{{Key: "_id", Value: rec.Id()}})
-	if err != nil {
-		return false, fmt.Errorf("check mcp server: %w", err)
-	}
-	if count > 0 {
-		return false, nil
-	}
-	if err := s.CreateMcp(rec); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// UpdateMcp replaces an MCP server entry (overwrite-in-place).
-func (s *Store) UpdateMcp(id string, rec McpServerRecord) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// The SQL UPDATE matched zero rows for an unknown id and said nothing, so
-	// neither does this.
-	_, err := s.db.Collection(mcpServersCollection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: id}},
-		bson.D{{Key: "$set", Value: bson.D{
-			{Key: "scope", Value: rec.Scope},
-			{Key: "owner_user_id", Value: rec.OwnerUserID},
-			{Key: "name", Value: rec.Name},
-			{Key: "description", Value: rec.Description},
-			{Key: "transport", Value: rec.Transport},
-			{Key: "url", Value: rec.URL},
-			{Key: "headers", Value: rec.Headers},
-			{Key: "default_enabled", Value: rec.DefaultEnabled},
-			{Key: "locked", Value: rec.Locked},
-			{Key: "updated_at", Value: time.Now().UTC()},
-		}}},
-	)
-	if err != nil {
-		return fmt.Errorf("update mcp server: %w", err)
-	}
-	return nil
-}
-
-// UpdateMcpState updates only the definition-plane default (default_enabled /
-// locked) for an MCP server; used by the Capability Center's inline controls.
-func (s *Store) UpdateMcpState(id string, defaultEnabled *bool, locked *string) error {
-	return s.updateCatalogState(mcpServersCollection, id, defaultEnabled, locked, errCapNotFound)
-}
-
-// updateCatalogState is the state-only write the three catalogs share.
-func (s *Store) updateCatalogState(collection, id string, defaultEnabled *bool, locked *string, missing error) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	set := bson.D{{Key: "updated_at", Value: time.Now().UTC()}}
-	if defaultEnabled != nil {
-		set = append(set, bson.E{Key: "default_enabled", Value: *defaultEnabled})
-	}
-	if locked != nil {
-		set = append(set, bson.E{Key: "locked", Value: *locked})
-	}
-
-	res, err := s.db.Collection(collection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: id}}, bson.D{{Key: "$set", Value: set}})
-	if err != nil {
-		return fmt.Errorf("update catalog state: %w", err)
-	}
-	if res.MatchedCount == 0 {
-		return missing
-	}
-	return nil
-}
-
 func (s *Store) ensureMcpNameFree(id, ownerUserID, name string) error {
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -373,25 +207,6 @@ func (s *Store) ensureMcpNameFree(id, ownerUserID, name string) error {
 	}
 	if count > 0 {
 		return fmt.Errorf("an MCP server named %q already exists", name)
-	}
-	return nil
-}
-
-func (s *Store) DeleteMcp(id string, ownerUserID, scope string) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	filter := bson.D{{Key: "_id", Value: id}}
-	if scope == "user" {
-		filter = append(filter, bson.E{Key: "owner_user_id", Value: ownerUserID})
-	}
-
-	res, err := s.db.Collection(mcpServersCollection).DeleteOne(ctx, filter)
-	if err != nil {
-		return fmt.Errorf("delete mcp server: %w", err)
-	}
-	if res.DeletedCount == 0 {
-		return errCapNotFound
 	}
 	return nil
 }
@@ -487,38 +302,7 @@ func (s *Store) GetSkill(id string) (*SkillRecord, error) {
 	return &rec, nil
 }
 
-// SkillNameTaken reports whether a skill name is already used by a platform
-// skill or by a skill owned by the given user (names are globally unique).
-func (s *Store) SkillNameTaken(name, userID, excludeID string) (bool, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	count, err := s.db.Collection(skillsCollection).CountDocuments(ctx, bson.D{
-		{Key: "name", Value: name},
-		{Key: "_id", Value: bson.D{{Key: "$ne", Value: excludeID}}},
-		{Key: "$or", Value: bson.A{
-			bson.D{{Key: "scope", Value: "platform"}},
-			bson.D{{Key: "owner_user_id", Value: userID}},
-		}},
-	})
-	if err != nil {
-		return false, fmt.Errorf("check skill name: %w", err)
-	}
-	return count > 0, nil
-}
-
 // ======== per-mode attachments ========
-
-// ListModeCapabilities returns the user's capability overrides for one
-// (agent, mode) as catalog attachments.
-func (s *Store) ListModeCapabilities(agentID, typeID string) ([]nanoprotocol.CapabilityAttachment, error) {
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil || ov == nil {
-		return nil, err
-	}
-	return ov.Capabilities, nil
-}
-
 // DefaultModeTypeID returns the agent's default session type (or its primary
 // type, or the platform default).
 func (s *Store) DefaultModeTypeID(agentID string) string {

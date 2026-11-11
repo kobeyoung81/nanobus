@@ -1,52 +1,15 @@
 package server
 
-// Empty catalogs must reach the console as arrays, not null. The capability
-// page read `.length` on a null tool list and blanked the whole admin console on
-// a fresh installation — the bus's own page, so the fix is pinned at the wire.
+// Empty catalogs must reach the console as arrays, not null: the capability page
+// read `.length` on a null tool list and blanked the whole console on a fresh
+// installation. Both lists it covered are the admin module's now — the bus only
+// forwards them — so the wire shape is pinned where the data is served, and what
+// is left here is the helper that keeps a nil slice off the wire.
 
 import (
 	"encoding/json"
-	"net/http"
 	"testing"
 )
-
-func TestRestListBuiltin_EmptyCatalogIsAnArray(t *testing.T) {
-	s := testServerMongo(t)
-
-	code, body := call(t, s, http.MethodGet, "/api/v1/capabilities/builtin", "")
-	if code != http.StatusOK {
-		t.Fatalf("list builtin: %d %s", code, body)
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if string(payload["tools"]) != "[]" {
-		t.Fatalf("tools = %s; want []", payload["tools"])
-	}
-}
-
-func TestRestListAlertRules_EmptyIsAnArray(t *testing.T) {
-	s := testServerMongo(t)
-
-	// The audit trail is the admin module's now (this service forwards it), so
-	// only the rules are still served from here.
-	for _, tc := range []struct{ path, field string }{
-		{"/api/v1/alert-rules", "rules"},
-	} {
-		code, body := call(t, s, http.MethodGet, tc.path, "")
-		if code != http.StatusOK {
-			t.Fatalf("%s: %d %s", tc.path, code, body)
-		}
-		var payload map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(body), &payload); err != nil {
-			t.Fatalf("decode %s: %v", tc.path, err)
-		}
-		if string(payload[tc.field]) != "[]" {
-			t.Fatalf("%s: %s = %s; want []", tc.path, tc.field, payload[tc.field])
-		}
-	}
-}
 
 func TestNonNilSlice(t *testing.T) {
 	empty := nonNilSlice[int](nil)

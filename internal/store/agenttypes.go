@@ -18,9 +18,6 @@ import (
 // an explicit type fall back to it.
 const DefaultAgentTypeID = "build"
 
-// DefaultAgentType returns the id new agents default to.
-func (s *Store) DefaultAgentTypeID() string { return DefaultAgentTypeID }
-
 // ======== AgentType CRUD ========
 
 // agentTypesCollection holds a type together with its allowed models and its
@@ -366,33 +363,6 @@ func (s *Store) DefaultSessionAgent(agentID string) string {
 	return sessions[0].DefID
 }
 
-// SetTypeCapabilityState upserts the platform baseline (default_enabled/locked)
-// for one capability on a type.
-func (s *Store) SetTypeCapabilityState(typeID, kind, ref string, defaultEnabled bool, locked string) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// One pipeline update, with the array derived server-side from its own
-	// current value: the property the SQL got from the (type_id, kind, ref)
-	// primary key, which an embedded array cannot carry. A read-modify-write in
-	// Go would let two concurrent admin edits overwrite each other's capability.
-	res, err := s.db.Collection(agentTypesCollection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: typeID}},
-		setCapabilityState(nanoprotocol.CapabilityKind(kind), ref, defaultEnabled, locked),
-	)
-	if err != nil {
-		return fmt.Errorf("set type capability state: %w", err)
-	}
-	// The SQL inserted its row whether or not the type existed — that table had
-	// no foreign key. Embedding needs the parent document, and inventing an empty
-	// one here would surface in the admin catalogue as a nameless type, so it is
-	// reported instead.
-	if res.MatchedCount == 0 {
-		return fmt.Errorf("agent type %q not found", typeID)
-	}
-	return nil
-}
-
 // setCapabilityState builds the pipeline that writes default_enabled/locked onto
 // one capability of a type document, appending the element when it is not there
 // yet.
@@ -443,54 +413,6 @@ func setCapabilityState(kind nanoprotocol.CapabilityKind, ref string, defaultEna
 	}}}}}}
 }
 
-// DeleteTypeCapabilityState removes a type's capability baseline so the type
-// inherits the definition-plane (global) default again.
-func (s *Store) DeleteTypeCapabilityState(typeID, kind, ref string) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	if _, err := s.db.Collection(agentTypesCollection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: typeID}},
-		bson.D{{Key: "$pull", Value: bson.D{{Key: "capabilities", Value: bson.D{
-			{Key: "kind", Value: kind},
-			{Key: "ref", Value: ref},
-		}}}}},
-	); err != nil {
-		return fmt.Errorf("delete type capability state: %w", err)
-	}
-	return nil
-}
-
-// getTypeCapabilityState returns the baseline state for a capability on a type
-// (defaults TRUE/"" when absent).
-func (s *Store) getTypeCapabilityState(typeID, kind, ref string) (bool, string, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// The one element is read by fetching the (short) array rather than with a
-	// positional $ projection: a type has a handful of capabilities, and the
-	// projection's `capabilities.$` shape is a lot of machinery for that.
-	var doc struct {
-		Capabilities []storedTypeCapability `bson:"capabilities"`
-	}
-	err := s.db.Collection(agentTypesCollection).FindOne(ctx,
-		bson.D{{Key: "_id", Value: typeID}},
-		options.FindOne().SetProjection(bson.D{{Key: "capabilities", Value: 1}}),
-	).Decode(&doc)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return true, "", nil
-	}
-	if err != nil {
-		return true, "", fmt.Errorf("get type capability state: %w", err)
-	}
-	for _, c := range doc.Capabilities {
-		if string(c.Kind) == kind && c.Ref == ref {
-			return c.DefaultEnabled, c.Locked, nil
-		}
-	}
-	return true, "", nil
-}
-
 // DefaultModelForType returns the type's default model id (the binding flagged
 // is_default, else the lowest-id allowed model). 0 when the type has none.
 func (s *Store) DefaultModelForType(typeID string) int64 {
@@ -517,61 +439,6 @@ func (s *Store) DefaultModelForType(typeID string) int64 {
 	return lowest
 }
 
-// ApplyModelToBuiltInTypes gives one platform model to every seeded agent type:
-// the console's "apply to built-in agent types" action, which is what makes a
-// model usable by the agents that exist before anyone edits a type by hand.
-//
-// Fill-only on purpose. A type that already lists the model is skipped, and the
-// model becomes a type's default only when that type has no default yet — an
-// administrator's per-type defaults are never rewritten. Running it twice
-// therefore changes nothing.
-func (s *Store) ApplyModelToBuiltInTypes(modelID int64) (applied, already, defaults []string, err error) {
-	model, err := s.GetModel(modelID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if model == nil {
-		return nil, nil, nil, ErrModelNotFound
-	}
-	if model.Scope != "platform" {
-		return nil, nil, nil, fmt.Errorf("model %d: %w", modelID, ErrNotPlatformModel)
-	}
-
-	types, err := s.ListAgentTypes(false)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	applied, already, defaults = []string{}, []string{}, []string{}
-	for _, t := range types {
-		if !t.Seeded {
-			continue
-		}
-		bound, hasDefault := false, false
-		for _, b := range t.Models {
-			if b.ModelID == modelID {
-				bound = true
-			}
-			if b.IsDefault {
-				hasDefault = true
-			}
-		}
-		if bound {
-			already = append(already, t.ID)
-			continue
-		}
-		binding := nanoprotocol.TypeModelBinding{ModelID: modelID, IsDefault: !hasDefault}
-		t.Models = append(t.Models, binding)
-		if err := s.SaveAgentType(t); err != nil {
-			return applied, already, defaults, fmt.Errorf("apply model %d to %s: %w", modelID, t.ID, err)
-		}
-		applied = append(applied, t.ID)
-		if binding.IsDefault {
-			defaults = append(defaults, t.ID)
-		}
-	}
-	return applied, already, defaults, nil
-}
-
 // GetAgentType loads one type (with its models + capability baseline).
 func (s *Store) GetAgentType(id string) (*nanoprotocol.AgentTypeDef, error) {
 	ctx, cancel := opCtx()
@@ -588,94 +455,6 @@ func (s *Store) GetAgentType(id string) (*nanoprotocol.AgentTypeDef, error) {
 	t := doc.def()
 	return &t, nil
 }
-
-// SaveAgentType upserts a type and replaces its model + capability bindings.
-// The seeded flag is preserved for platform-seeded types.
-func (s *Store) SaveAgentType(t nanoprotocol.AgentTypeDef) error {
-	if t.ID == "" {
-		return fmt.Errorf("agent type id is required")
-	}
-	// Built-in (seeded) definitions keep their structural identity: an admin may
-	// edit prompt/models/permissions/settings but not the execution attributes
-	// or invocation role.
-	if existing, err := s.GetAgentType(t.ID); err == nil && existing != nil && existing.Seeded {
-		t.Role = existing.Role
-		t.Strategy = existing.Strategy
-		t.Context = existing.Context
-		t.Output = existing.Output
-		t.SessionBinding = existing.SessionBinding
-	}
-
-	// Read-only keys must keep their catalog default across the type baseline
-	// and its capability rules, mirroring the ResolvePermissions merge order.
-	// The catalog itself (permission_keys) is seeded from the binary rather than
-	// by a migration: it is a flat list the code owns.
-	combined := append([]nanoprotocol.PermissionRule{}, t.Permissions...)
-	for _, c := range t.Capabilities {
-		combined = append(combined, c.Permissions...)
-	}
-	if err := s.validateReadOnlyRules(combined); err != nil {
-		return err
-	}
-
-	doc := storedAgentType{
-		ID: t.ID, Role: t.Role, Name: t.Name, Description: t.Description,
-		Prompt: t.Prompt, MaxRounds: t.MaxRounds,
-		ChannelFallbacks: t.ChannelFallbacks, Permissions: storedPermissionRules(t.Permissions),
-		Settings: t.Settings, Seeded: t.Seeded,
-		Strategy:       defaultStr(t.Strategy, "react"),
-		Context:        defaultStr(t.Context, "windowed"),
-		Output:         defaultStr(t.Output, "stream"),
-		SessionBinding: defaultStr(t.SessionBinding, "shared"),
-		Models:         storedTypeModels(t.Models),
-		Capabilities:   storedTypeCapabilities(t.Capabilities),
-	}
-
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// $set of the fields an admin owns, plus $setOnInsert of created_at, rather
-	// than a replace of the document:
-	//
-	//   - `seeded` is deliberately absent, as it was from the SQL column list:
-	//     it marks a platform-seeded type, so neither an admin save nor a create
-	//     may move it (a new type is simply not seeded);
-	//   - created_at was not in the SQL upsert either, and a replace would drop
-	//     a value the backfill carries over.
-	// The prompt baseline (prompt_hash/prompt_version) is likewise the seeder's
-	// to write, not this method's.
-	now := time.Now().UTC()
-	update := bson.D{
-		{Key: "$set", Value: bson.D{
-			{Key: "role", Value: doc.Role},
-			{Key: "name", Value: doc.Name},
-			{Key: "description", Value: doc.Description},
-			{Key: "prompt", Value: doc.Prompt},
-			{Key: "max_rounds", Value: doc.MaxRounds},
-			{Key: "channel_fallbacks", Value: doc.ChannelFallbacks},
-			{Key: "permissions", Value: doc.Permissions},
-			{Key: "settings", Value: doc.Settings},
-			{Key: "strategy", Value: doc.Strategy},
-			{Key: "context", Value: doc.Context},
-			{Key: "output", Value: doc.Output},
-			{Key: "session_binding", Value: doc.SessionBinding},
-			{Key: "models", Value: doc.Models},
-			{Key: "capabilities", Value: doc.Capabilities},
-			{Key: "updated_at", Value: now},
-		}},
-		{Key: "$setOnInsert", Value: bson.D{{Key: "created_at", Value: now}}},
-	}
-	err := retryOnDuplicateUpsert(func() error {
-		_, err := s.db.Collection(agentTypesCollection).UpdateOne(ctx,
-			bson.D{{Key: "_id", Value: t.ID}}, update, options.UpdateOne().SetUpsert(true))
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("upsert agent type: %w", err)
-	}
-	return nil
-}
-
 func storedTypeModels(models []nanoprotocol.TypeModelBinding) []storedTypeModel {
 	if len(models) == 0 {
 		return nil
@@ -701,170 +480,7 @@ func storedTypeCapabilities(caps []nanoprotocol.TypeCapabilityBinding) []storedT
 	return out
 }
 
-// ClearAgentsTypeRef unsets type_id on every agent pointing at the type. The
-// type catalogue is the admin module's now; when it deletes a type it asks its
-// owner (this service) to clear the references first, so no agent is left
-// pointing at a definition that no longer exists.
-func (s *Store) ClearAgentsTypeRef(id string) (int, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	res, err := s.db.Collection(agentsCollection).UpdateMany(ctx,
-		bson.D{{Key: "type_id", Value: id}},
-		bson.D{
-			{Key: "$unset", Value: bson.D{{Key: "type_id", Value: ""}}},
-			{Key: "$set", Value: bson.D{{Key: "updated_at", Value: time.Now().UTC()}}},
-		},
-	)
-	if err != nil {
-		return 0, fmt.Errorf("clear agents of type %q: %w", id, err)
-	}
-	return int(res.ModifiedCount), nil
-}
-
-// DeleteAgentType removes an admin-created type; seeded types are protected.
-func (s *Store) DeleteAgentType(id string) error {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// The type is read before anything is written: a seeded type is refused, and
-	// its agents must not have been touched by the time that is known.
-	existing, err := s.GetAgentType(id)
-	if err != nil {
-		return err
-	}
-	if existing == nil || existing.Seeded {
-		return fmt.Errorf("agent type not found or is seeded")
-	}
-
-	// The SQL let the foreign key clear the reference (ON DELETE SET NULL).
-	// Nothing does that here, and an agent left pointing at a deleted type
-	// resolves to no definition at all — so the agents are cleared first, and a
-	// failure between the two steps leaves a type with no agents rather than
-	// agents with no type.
-	if _, err := s.db.Collection(agentsCollection).UpdateMany(ctx,
-		bson.D{{Key: "type_id", Value: id}},
-		bson.D{
-			{Key: "$unset", Value: bson.D{{Key: "type_id", Value: ""}}},
-			{Key: "$set", Value: bson.D{{Key: "updated_at", Value: time.Now().UTC()}}},
-		},
-	); err != nil {
-		return fmt.Errorf("clear agents of type %q: %w", id, err)
-	}
-
-	res, err := s.db.Collection(agentTypesCollection).DeleteOne(ctx,
-		bson.D{
-			{Key: "_id", Value: id},
-			// A missing seeded field means not seeded, so this is `seeded = 0`.
-			{Key: "seeded", Value: bson.D{{Key: "$ne", Value: true}}},
-		})
-	if err != nil {
-		return fmt.Errorf("delete agent type: %w", err)
-	}
-	if res.DeletedCount == 0 {
-		return fmt.Errorf("agent type not found or is seeded")
-	}
-	return nil
-}
-
-// SeedAgentTypes inserts the built-in definitions this binary ships, with the
-// capability baselines they start with.
-//
-// It only ever inserts: a type's prompt, permissions, settings, models and
-// baselines are all editable (the portal edits the first three), and a seeder
-// that overwrote them would undo an admin's work on every deploy. A definition
-// that already exists is therefore left completely alone — including a *seeded*
-// one, whose structure SaveAgentType already protects.
-//
-// Note what is not copied: the platform default each tool carries. That lives on
-// the tool definition (builtin_tools.default_enabled / locked), and a baseline
-// element that is absent means "inherit it".
-func (s *Store) SeedAgentTypes(defs []nanoprotocol.AgentTypeDef) (inserted int, err error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-	coll := s.db.Collection(agentTypesCollection)
-
-	for _, t := range defs {
-		if t.ID == "" {
-			continue
-		}
-		now := time.Now().UTC()
-		update := bson.D{{Key: "$setOnInsert", Value: bson.D{
-			{Key: "role", Value: t.Role},
-			{Key: "name", Value: t.Name},
-			{Key: "description", Value: t.Description},
-			{Key: "max_rounds", Value: t.MaxRounds},
-			{Key: "channel_fallbacks", Value: t.ChannelFallbacks},
-			{Key: "permissions", Value: storedPermissionRules(t.Permissions)},
-			{Key: "settings", Value: t.Settings},
-			{Key: "strategy", Value: defaultStr(t.Strategy, "react")},
-			{Key: "context", Value: defaultStr(t.Context, "windowed")},
-			{Key: "output", Value: defaultStr(t.Output, "stream")},
-			{Key: "session_binding", Value: defaultStr(t.SessionBinding, "shared")},
-			// The flag is the point: it is what makes an admin's later save keep the
-			// execution attributes this catalog owns.
-			{Key: "seeded", Value: true},
-			{Key: "created_at", Value: now},
-			{Key: "updated_at", Value: now},
-		}}}
-		res, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: t.ID}}, update,
-			options.UpdateOne().SetUpsert(true))
-		if err != nil {
-			return inserted, fmt.Errorf("seed agent type %q: %w", t.ID, err)
-		}
-		inserted += int(res.UpsertedCount)
-
-		// Baselines are the one part that is added to an existing type: a
-		// definition that is already there may still be missing the tools a later
-		// release gave it. The filter makes it an "append only if absent", so an
-		// admin's toggle (or a lock) is never reset.
-		for _, c := range t.Capabilities {
-			if _, err := coll.UpdateOne(ctx,
-				bson.D{
-					{Key: "_id", Value: t.ID},
-					{Key: "capabilities", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$elemMatch",
-						Value: bson.D{{Key: "kind", Value: c.Kind}, {Key: "ref", Value: c.Ref}}}}}}},
-				},
-				bson.D{{Key: "$push", Value: bson.D{{Key: "capabilities", Value: storedTypeCapability{
-					Kind: c.Kind, Ref: c.Ref, DefaultEnabled: c.DefaultEnabled, Locked: c.Locked,
-				}}}}},
-			); err != nil {
-				return inserted, fmt.Errorf("seed agent type %q baseline %s/%s: %w", t.ID, c.Kind, c.Ref, err)
-			}
-		}
-	}
-	return inserted, nil
-}
-
 // ======== permission keys ========
-
-// Permission keys are the admin module's collection now. The bus still has to
-// check a policy against the read-only keys, so it asks for them through this
-// provider (wired to the admin client at startup).
-func (s *Store) SetReadOnlyPermissionKeySource(fn func() (map[string]nanoprotocol.PermissionAction, error)) {
-	s.readOnlyKeys = fn
-}
-
-// validateReadOnlyRules rejects a policy that would move a read-only permission
-// key away from its catalog default. The check is on the effective (last-match
-// wins) action, so a wildcard baseline such as "*": deny is also rejected unless
-// the read-only keys are explicitly re-allowed after it.
-func (s *Store) validateReadOnlyRules(rules []nanoprotocol.PermissionRule) error {
-	if s.readOnlyKeys == nil {
-		return fmt.Errorf("permission key catalog is not configured")
-	}
-	keys, err := s.readOnlyKeys()
-	if err != nil {
-		return err
-	}
-	for id, required := range keys {
-		if got := nanoprotocol.EffectivePermission(id, rules); got != required {
-			return fmt.Errorf("permission key %q is read-only and must remain %q (got %q)", id, required, got)
-		}
-	}
-	return nil
-}
-
 // AgentTypeForAgent returns the type an agent belongs to (nil if none).
 func (s *Store) AgentTypeForAgent(agentID string) (*nanoprotocol.AgentTypeDef, error) {
 	agent, err := s.GetAgent(agentID)
@@ -875,19 +491,6 @@ func (s *Store) AgentTypeForAgent(agentID string) (*nanoprotocol.AgentTypeDef, e
 		return nil, nil
 	}
 	return s.GetAgentType(agent.TypeID)
-}
-
-// GetModePermissions returns the raw user override rules for one (agent, mode)
-// without the type baseline. Empty when none are stored.
-func (s *Store) GetModePermissions(agentID, typeID string) ([]nanoprotocol.PermissionRule, error) {
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil || ov == nil {
-		return []nanoprotocol.PermissionRule{}, err
-	}
-	if ov.Permissions == nil {
-		return []nanoprotocol.PermissionRule{}, nil
-	}
-	return ov.Permissions, nil
 }
 
 // ======== helpers ========

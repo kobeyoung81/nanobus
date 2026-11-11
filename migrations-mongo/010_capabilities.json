@@ -1,40 +1,27 @@
 {
   "collections": {
-    "admin_mcp_servers": {
-      "indexes": [
-        {
-          "name": "scope_owner_name",
-          "keys": [["scope", 1], ["owner_user_id", 1], ["name", 1]]
-        }
-      ]
-    },
-    "admin_skills": {
-      "indexes": [
-        {
-          "name": "name_unique",
-          "keys": [["name", 1]],
-          "unique": true
-        },
-        {
-          "name": "scope_owner_name",
-          "keys": [["scope", 1], ["owner_user_id", 1], ["name", 1]]
-        }
-      ]
-    },
     "auth_secrets": {
       "indexes": [
         {
           "name": "identity_unique",
-          "keys": [["user_id", 1], ["capability_kind", 1], ["ref", 1], ["secret_key", 1]],
-          "unique": true
-        }
-      ]
-    },
-    "admin_user_skill_acks": {
-      "indexes": [
-        {
-          "name": "user_skill_unique",
-          "keys": [["user_id", 1], ["skill_id", 1]],
+          "keys": [
+            [
+              "user_id",
+              1
+            ],
+            [
+              "capability_kind",
+              1
+            ],
+            [
+              "ref",
+              1
+            ],
+            [
+              "secret_key",
+              1
+            ]
+          ],
           "unique": true
         }
       ]
