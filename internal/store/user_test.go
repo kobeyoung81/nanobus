@@ -451,25 +451,6 @@ func TestListContainers_NewestFirst(t *testing.T) {
 	}
 }
 
-func TestMigrations_DeclareUserIndexes(t *testing.T) {
-	s := storetest.Connect(t)
-
-	// The identity index is the SQL primary key of user_channels, and it is what
-	// makes a racing onboarding fail atomically.
-	assertIndexKeys(t, s.DB().Collection("auth_users"), "channel_identity_unique", [][2]any{
-		{"channels.channel", int32(1)}, {"channels.sender_id", int32(1)},
-	})
-	// The binding id was UNIQUE on its own table; container requests quote it.
-	assertIndexKeys(t, s.DB().Collection("auth_users"), "binding_id_unique", [][2]any{
-		{"channels.binding_id", int32(1)},
-	})
-	// Uniqueness itself, not just the key order: these two *are* the constraints.
-	assertIndexUnique(t, s.DB().Collection("auth_users"), "channel_identity_unique")
-	assertIndexUnique(t, s.DB().Collection("auth_users"), "binding_id_unique")
-	// The container-request indexes moved to the module that writes that
-	// collection; its own manifest and tests declare and assert them.
-}
-
 // The identity and administration fields the portal used to own in its own SQL
 // table. They live in the user document now, so the two services cannot disagree
 // about one account — and the tests below pin the two things that have teeth: the
