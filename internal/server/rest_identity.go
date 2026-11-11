@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
@@ -198,87 +197,6 @@ func writeAuthFailure(w http.ResponseWriter, err error) {
 		return
 	}
 	writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the auth module is unavailable"})
-}
-
-// restSaveRefreshToken stores a session ticket. The hash is what the client
-// presented to the auth service; the bus never sees the token itself.
-func (s *Server) restSaveRefreshToken(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		TokenHash string `json:"token_hash"`
-		UserID    string `json:"user_id"`
-		ExpiresAt string `json:"expires_at"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		return
-	}
-	expiresAt, err := time.Parse(time.RFC3339, body.ExpiresAt)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expires_at must be RFC3339"})
-		return
-	}
-	if err := s.store.SaveRefreshToken(body.TokenHash, body.UserID, expiresAt); err != nil {
-		slog.Error("save refresh token", "user_id", body.UserID, "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "saved"})
-}
-
-func (s *Server) restGetRefreshToken(w http.ResponseWriter, r *http.Request) {
-	hash := r.PathValue("hash")
-	userID, expiresAt, found, err := s.store.RefreshToken(hash)
-	if err != nil {
-		slog.Error("read refresh token", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	if !found {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "refresh token not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id":    userID,
-		"expires_at": expiresAt.UTC().Format(time.RFC3339),
-	})
-}
-
-func (s *Server) restDeleteRefreshToken(w http.ResponseWriter, r *http.Request) {
-	hash := r.PathValue("hash")
-	if err := s.store.DeleteRefreshToken(hash); err != nil {
-		slog.Error("delete refresh token", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "revoked"})
-}
-
-// restRevokeUserRefreshTokens ends every session a user holds — what a password
-// change or a suspension has to do.
-func (s *Server) restRevokeUserRefreshTokens(w http.ResponseWriter, r *http.Request) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	if err := s.store.DeleteUserRefreshTokens(userID); err != nil {
-		slog.Error("revoke user refresh tokens", "user_id", userID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "revoked"})
-}
-
-// restPurgeRefreshTokens drops the tickets that have expired. The auth service
-// calls it on the paths that already look at tokens; nothing schedules it.
-func (s *Server) restPurgeRefreshTokens(w http.ResponseWriter, r *http.Request) {
-	deleted, err := s.store.PurgeExpiredRefreshTokens(time.Now().UTC())
-	if err != nil {
-		slog.Error("purge refresh tokens", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
 
 // errUserNotFound is the sentinel the account endpoints answer 404 on.

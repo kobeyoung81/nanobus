@@ -30,28 +30,6 @@
           ]
         }
       ]
-    },
-    "auth_refresh_tokens": {
-      "indexes": [
-        {
-          "name": "user_tokens",
-          "keys": [
-            [
-              "user_id",
-              1
-            ]
-          ]
-        },
-        {
-          "name": "expires_at",
-          "keys": [
-            [
-              "expires_at",
-              1
-            ]
-          ]
-        }
-      ]
     }
   }
 }

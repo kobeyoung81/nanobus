@@ -69,7 +69,8 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users/{id}", s.restGetUser)
 
 	// The three surfaces that used to be the console's and the auth service's own
-	// tables: directory links, git-browser shortcuts and refresh tokens. See
+	// tables: directory links and git-browser shortcuts (the session tickets are
+	// the auth service's own now). See
 	// internal/store/identity.go for why they moved in here.
 	mux.HandleFunc("GET /api/v1/users/{userID}/oauth-links", s.restListOAuthLinks)
 	mux.HandleFunc("POST /api/v1/users/{userID}/oauth-links", s.restLinkOAuth)
@@ -78,11 +79,6 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users/{userID}/git-shortcuts", s.restListGitShortcuts)
 	mux.HandleFunc("POST /api/v1/users/{userID}/git-shortcuts", s.restAddGitShortcut)
 	mux.HandleFunc("DELETE /api/v1/users/{userID}/git-shortcuts/{id}", s.restDeleteGitShortcut)
-	mux.HandleFunc("POST /api/v1/auth/refresh-tokens", s.restSaveRefreshToken)
-	mux.HandleFunc("DELETE /api/v1/auth/refresh-tokens", s.restRevokeUserRefreshTokens)
-	mux.HandleFunc("POST /api/v1/auth/refresh-tokens/purge", s.restPurgeRefreshTokens)
-	mux.HandleFunc("GET /api/v1/auth/refresh-tokens/{hash}", s.restGetRefreshToken)
-	mux.HandleFunc("DELETE /api/v1/auth/refresh-tokens/{hash}", s.restDeleteRefreshToken)
 
 	// Agents and their groups are the portal's data now. The management paths
 	// (/api/v1/agents, /api/v1/agent-groups, the attention snapshot) are served

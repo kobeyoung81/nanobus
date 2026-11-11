@@ -1,14 +1,13 @@
 package store_test
 
-// The two domains that used to be somebody else's tables. What has to hold is what
-// the callers relied on: a link is one row per provider identity, and a refresh
-// token is addressed by its own hash. The starred git paths moved to nanoauth
-// with the rest of identity, and their tests with them.
+// The directory links. What has to hold is what the callers relied on: a link is
+// one row per provider identity, and re-linking an identity moves it rather than
+// adding a second owner. The starred paths and the session tickets moved to
+// nanoauth with the rest of identity, and their tests with them.
 
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 	migrationsmongo "gitee.com/kobeyoung81/nanobus/migrations-mongo"
@@ -92,71 +91,6 @@ func TestOAuthProviderLinks_IsTheDirectoryRoster(t *testing.T) {
 	}
 }
 
-func TestRefreshToken_Lifecycle(t *testing.T) {
-	s := storetest.Connect(t)
-	expires := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-
-	if err := s.SaveRefreshToken("hash-1", "u-1", expires); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	userID, got, found, err := s.RefreshToken("hash-1")
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if !found || userID != "u-1" || !got.Equal(expires) {
-		t.Fatalf("read gave %q %v found=%v", userID, got, found)
-	}
-
-	// Saving the same hash again is the same ticket, not a second one.
-	if err := s.SaveRefreshToken("hash-1", "u-1", expires); err != nil {
-		t.Fatalf("re-save: %v", err)
-	}
-	if err := s.SaveRefreshToken("hash-2", "u-2", expires); err != nil {
-		t.Fatalf("second ticket: %v", err)
-	}
-
-	if err := s.DeleteRefreshToken("hash-1"); err != nil {
-		t.Fatalf("revoke: %v", err)
-	}
-	if _, _, found, err := s.RefreshToken("hash-1"); err != nil || found {
-		t.Fatalf("revoked ticket still found: found=%v err=%v", found, err)
-	}
-	// Logout must be safe to repeat.
-	if err := s.DeleteRefreshToken("hash-1"); err != nil {
-		t.Fatalf("revoking twice errored: %v", err)
-	}
-
-	if err := s.DeleteUserRefreshTokens("u-2"); err != nil {
-		t.Fatalf("revoke all: %v", err)
-	}
-	if _, _, found, err := s.RefreshToken("hash-2"); err != nil || found {
-		t.Fatalf("user revocation missed the ticket: found=%v err=%v", found, err)
-	}
-}
-
-func TestPurgeExpiredRefreshTokens_KeepsLiveOnes(t *testing.T) {
-	s := storetest.Connect(t)
-	now := time.Now().UTC()
-
-	if err := s.SaveRefreshToken("expired", "u-1", now.Add(-time.Hour)); err != nil {
-		t.Fatalf("save expired: %v", err)
-	}
-	if err := s.SaveRefreshToken("live", "u-1", now.Add(time.Hour)); err != nil {
-		t.Fatalf("save live: %v", err)
-	}
-
-	deleted, err := s.PurgeExpiredRefreshTokens(now)
-	if err != nil {
-		t.Fatalf("purge: %v", err)
-	}
-	if deleted != 1 {
-		t.Fatalf("purged %d, want 1", deleted)
-	}
-	if _, _, found, err := s.RefreshToken("live"); err != nil || !found {
-		t.Fatalf("the live ticket went with the expired one: found=%v err=%v", found, err)
-	}
-}
-
 func TestFindUserByEmailAndRename(t *testing.T) {
 	s := storetest.Connect(t)
 
@@ -202,7 +136,7 @@ func TestIdentityCollectionsAreMigrated(t *testing.T) {
 		t.Fatalf("load manifests: %v", err)
 	}
 	wanted := map[string]bool{
-		"auth_oauth_providers": false, "auth_refresh_tokens": false,
+		"auth_oauth_providers": false,
 	}
 	for name, raw := range manifests {
 		var manifest struct {

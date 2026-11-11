@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 // call runs one request against the REST mux and returns the status and body.
@@ -76,41 +75,6 @@ func TestRestOAuthLinks_Lifecycle(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
-
-func TestRestRefreshTokens_Lifecycle(t *testing.T) {
-	s := testServerMongo(t)
-	expires := time.Now().UTC().Add(time.Hour).Truncate(time.Second).Format(time.RFC3339)
-
-	code, body := call(t, s, http.MethodPost, "/api/v1/auth/refresh-tokens",
-		`{"token_hash":"hash-1","user_id":"u-1","expires_at":"`+expires+`"}`)
-	if code != http.StatusOK {
-		t.Fatalf("save: %d %s", code, body)
-	}
-	code, body = call(t, s, http.MethodGet, "/api/v1/auth/refresh-tokens/hash-1", "")
-	if code != http.StatusOK || !strings.Contains(body, "u-1") {
-		t.Fatalf("read: %d %s", code, body)
-	}
-	if code, _ = call(t, s, http.MethodGet, "/api/v1/auth/refresh-tokens/ghost", ""); code != http.StatusNotFound {
-		t.Fatalf("an unknown hash should be 404, got %d", code)
-	}
-	if code, body = call(t, s, http.MethodDelete, "/api/v1/auth/refresh-tokens/hash-1", ""); code != http.StatusOK {
-		t.Fatalf("revoke: %d %s", code, body)
-	}
-	if code, _ = call(t, s, http.MethodGet, "/api/v1/auth/refresh-tokens/hash-1", ""); code != http.StatusNotFound {
-		t.Fatalf("a revoked hash should be 404, got %d", code)
-	}
-	// Logout revokes everything the account holds.
-	if code, body = call(t, s, http.MethodPost, "/api/v1/auth/refresh-tokens",
-		`{"token_hash":"hash-2","user_id":"u-2","expires_at":"`+expires+`"}`); code != http.StatusOK {
-		t.Fatalf("second save: %d %s", code, body)
-	}
-	if code, body = call(t, s, http.MethodDelete, "/api/v1/auth/refresh-tokens?user_id=u-2", ""); code != http.StatusOK {
-		t.Fatalf("revoke all: %d %s", code, body)
-	}
-	if code, _ = call(t, s, http.MethodGet, "/api/v1/auth/refresh-tokens/hash-2", ""); code != http.StatusNotFound {
-		t.Fatalf("user revocation left the ticket: %d", code)
-	}
-}
 
 // TestRestUserAccounts_EmailLookupAndRename is the sign-in flow's two calls: find
 // the account by the address that was typed, then rename it.
