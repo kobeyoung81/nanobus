@@ -10,6 +10,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
+	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 )
 
@@ -31,7 +32,24 @@ func wireServer(t *testing.T, opts ...ServerOption) *Server {
 // so it does not need a database at all.
 func testServerMongo(t *testing.T) *Server {
 	t.Helper()
-	return NewServer(storetest.Connect(t))
+	s := NewServer(storetest.Connect(t))
+	// The account surface belongs to nanoauth now, so a server under test needs a
+	// stand-in for it; the empty answers are enough for the tests that only read a
+	// page of accounts (they ask "does this person sign in through the directory").
+	s.auth = emptyAuthStub(t)
+	return s
+}
+
+// emptyAuthStub answers the two link reads with nothing linked. It is deliberately
+// minimal: a test whose subject is a link uses the client's own tests.
+func emptyAuthStub(t *testing.T) *authclient.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"links":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return authclient.New(srv.URL, "test-token")
 }
 
 func TestRestPostInbound_Success(t *testing.T) {

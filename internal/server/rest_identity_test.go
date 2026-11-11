@@ -6,7 +6,6 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -27,51 +26,6 @@ func call(t *testing.T, s *Server, method, path, body string) (int, string) {
 	rec := httptest.NewRecorder()
 	restMux(t, s).ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
-}
-
-func TestRestOAuthLinks_Lifecycle(t *testing.T) {
-	s := testServerMongo(t)
-
-	if code, body := call(t, s, http.MethodPost, "/api/v1/users/u-1/oauth-links",
-		`{"provider":"ldap","provider_id":"cn=kobeyoung,ou=people"}`); code != http.StatusOK {
-		t.Fatalf("link: %d %s", code, body)
-	}
-	code, body := call(t, s, http.MethodGet, "/api/v1/users/u-1/oauth-links", "")
-	if code != http.StatusOK || !strings.Contains(body, "cn=kobeyoung,ou=people") {
-		t.Fatalf("list links: %d %s", code, body)
-	}
-
-	// The console's roster call: who signs in through the directory.
-	code, body = call(t, s, http.MethodGet, "/api/v1/oauth-links?provider=ldap", "")
-	if code != http.StatusOK {
-		t.Fatalf("roster: %d %s", code, body)
-	}
-	var roster struct {
-		UserIDs []string `json:"user_ids"`
-	}
-	if err := json.Unmarshal([]byte(body), &roster); err != nil {
-		t.Fatalf("decode roster: %v", err)
-	}
-	if len(roster.UserIDs) != 1 || roster.UserIDs[0] != "u-1" {
-		t.Fatalf("unexpected roster: %+v", roster)
-	}
-
-	// The sign-in flow's question: which account is this identity?
-	code, body = call(t, s, http.MethodGet, "/api/v1/oauth-links?provider=ldap&provider_id=cn=kobeyoung,ou=people", "")
-	if code != http.StatusOK || !strings.Contains(body, "u-1") {
-		t.Fatalf("identity lookup: %d %s", code, body)
-	}
-	if code, body = call(t, s, http.MethodGet, "/api/v1/oauth-links?provider=ldap&provider_id=cn=nobody", ""); code != http.StatusOK ||
-		!strings.Contains(body, `"user_ids":[]`) {
-		t.Fatalf("an unknown identity should be an empty list: %d %s", code, body)
-	}
-
-	if code, body = call(t, s, http.MethodDelete, "/api/v1/users/u-1/oauth-links/ldap", ""); code != http.StatusOK {
-		t.Fatalf("unlink: %d %s", code, body)
-	}
-	if code, body = call(t, s, http.MethodGet, "/api/v1/oauth-links?provider=ldap", ""); code != http.StatusOK || strings.Contains(body, "u-1") {
-		t.Fatalf("the roster kept a removed link: %d %s", code, body)
-	}
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }

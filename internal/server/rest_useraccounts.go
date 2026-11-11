@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -48,7 +49,7 @@ func userAccountJSON(sum store.UserSummary, channels []string, ldap bool) map[st
 // directoryLinkedUserIDs is the set of accounts that sign in through the
 // directory, for a whole page of the list in one query rather than one per row.
 func (s *Server) directoryLinkedUserIDs() (map[string]bool, error) {
-	links, err := s.store.OAuthProviderLinks("ldap")
+	links, err := s.auth.OAuthLinksByProvider(context.Background(), "ldap")
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +62,7 @@ func (s *Server) directoryLinkedUserIDs() (map[string]bool, error) {
 
 // userHasDirectoryLink answers the same question for a single account.
 func (s *Server) userHasDirectoryLink(userID string) (bool, error) {
-	links, err := s.store.OAuthLinks(userID)
+	links, err := s.auth.OAuthLinks(context.Background(), userID)
 	if err != nil {
 		return false, err
 	}

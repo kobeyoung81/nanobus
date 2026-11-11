@@ -9,24 +9,20 @@ import (
 	"strconv"
 
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
-	"gitee.com/kobeyoung81/nanobus/internal/store"
 )
 
-// The three surfaces that used to be two other services' tables.
+// The identity surfaces the console and the sign-in flow call.
 //
 //   - oauth links: the auth service writes them (a directory identity is linked to
-//     an account) and the console reads them (to show who signs in through the
-//     directory);
-//   - git shortcuts: the console's starred paths;
-//   - refresh tokens: the auth service's session tickets.
+//     an account) and the console reads them (who signs in through the directory);
+//   - git shortcuts: the console's starred paths.
 //
-// They are here because the bus is the only service with a database connection.
-// The shapes are the callers': every field either service already used is still
-// there under the same name, so the change on their side is a transport swap, not
-// a remodel.
+// The rows are identity's; these handlers keep the shapes their callers already
+// use and forward. The refresh tickets are not here at all any more — they are the
+// auth service's own state and it keeps them itself.
 
 // oauthLinkJSON is one link as the callers see it.
-func oauthLinkJSON(link store.OAuthLink) map[string]any {
+func oauthLinkJSON(link authclient.OAuthLink) map[string]any {
 	return map[string]any{
 		"user_id":     link.UserID,
 		"provider":    link.Provider,
@@ -36,10 +32,10 @@ func oauthLinkJSON(link store.OAuthLink) map[string]any {
 
 func (s *Server) restListOAuthLinks(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
-	links, err := s.store.OAuthLinks(userID)
+	links, err := s.auth.OAuthLinks(r.Context(), userID)
 	if err != nil {
 		slog.Error("list oauth links", "user_id", userID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeAuthFailure(w, err)
 		return
 	}
 	out := make([]map[string]any, 0, len(links))
@@ -59,24 +55,21 @@ func (s *Server) restListOAuthLinksByProvider(w http.ResponseWriter, r *http.Req
 	}
 	// `provider_id` narrows it to one identity, which is how the sign-in flow asks
 	// "which account is this directory/OAuth subject".
-	if providerID := r.URL.Query().Get("provider_id"); providerID != "" {
-		userID, found, err := s.store.OAuthLinkOwner(provider, providerID)
-		if err != nil {
-			slog.Error("look up oauth identity", "provider", provider, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-			return
-		}
-		ids := []string{}
-		if found {
-			ids = append(ids, userID)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"user_ids": ids})
-		return
-	}
-	links, err := s.store.OAuthProviderLinks(provider)
+	links, err := s.auth.OAuthLinksByProvider(r.Context(), provider)
 	if err != nil {
 		slog.Error("list oauth links by provider", "provider", provider, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeAuthFailure(w, err)
+		return
+	}
+	if providerID := r.URL.Query().Get("provider_id"); providerID != "" {
+		ids := []string{}
+		for _, link := range links {
+			if link.ProviderID == providerID {
+				ids = append(ids, link.UserID)
+				break
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"user_ids": ids})
 		return
 	}
 	seen := map[string]bool{}
@@ -100,9 +93,9 @@ func (s *Server) restLinkOAuth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	if err := s.store.LinkOAuth(userID, body.Provider, body.ProviderID); err != nil {
+	if err := s.auth.LinkOAuth(r.Context(), userID, body.Provider, body.ProviderID); err != nil {
 		slog.Error("link oauth", "user_id", userID, "provider", body.Provider, "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAuthFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "linked"})
@@ -111,9 +104,9 @@ func (s *Server) restLinkOAuth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) restUnlinkOAuth(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
 	provider := r.PathValue("provider")
-	if err := s.store.UnlinkOAuth(userID, provider); err != nil {
+	if err := s.auth.UnlinkOAuth(r.Context(), userID, provider); err != nil {
 		slog.Error("unlink oauth", "user_id", userID, "provider", provider, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeAuthFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "unlinked"})

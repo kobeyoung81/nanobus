@@ -163,3 +163,55 @@ func (c *Client) DeleteUserSecret(ctx context.Context, userID, kind, ref, key st
 		"?key=" + url.QueryEscape(key)
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }
+
+// OAuthLink is one identity link: this account signs in as that provider identity.
+type OAuthLink struct {
+	UserID     string `json:"user_id"`
+	Provider   string `json:"provider"`
+	ProviderID string `json:"provider_id"`
+}
+
+// OAuthLinks lists the identities linked to one account.
+func (c *Client) OAuthLinks(ctx context.Context, userID string) ([]OAuthLink, error) {
+	var payload struct {
+		Links []OAuthLink `json:"links"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/internal/v1/users/"+url.PathEscape(userID)+"/oauth-links", nil, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Links == nil {
+		payload.Links = []OAuthLink{}
+	}
+	return payload.Links, nil
+}
+
+// OAuthLinksByProvider is the roster one provider signs in with.
+func (c *Client) OAuthLinksByProvider(ctx context.Context, provider string) ([]OAuthLink, error) {
+	var payload struct {
+		Links []OAuthLink `json:"links"`
+	}
+	path := "/internal/v1/oauth-links?provider=" + url.QueryEscape(provider)
+	if err := c.do(ctx, http.MethodGet, path, nil, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Links == nil {
+		payload.Links = []OAuthLink{}
+	}
+	return payload.Links, nil
+}
+
+// LinkOAuth links (or moves) one provider identity.
+func (c *Client) LinkOAuth(ctx context.Context, userID, provider, providerID string) error {
+	body, err := json.Marshal(map[string]string{"provider_id": providerID})
+	if err != nil {
+		return err
+	}
+	path := "/internal/v1/users/" + url.PathEscape(userID) + "/oauth-links/" + url.PathEscape(provider)
+	return c.do(ctx, http.MethodPost, path, bytes.NewReader(body), nil)
+}
+
+// UnlinkOAuth removes an account's link for one provider.
+func (c *Client) UnlinkOAuth(ctx context.Context, userID, provider string) error {
+	path := "/internal/v1/users/" + url.PathEscape(userID) + "/oauth-links/" + url.PathEscape(provider)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
