@@ -116,6 +116,9 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// keep reacting exactly as they did when this service wrote the rows.
 	mux.HandleFunc("POST /api/v1/internal/agents-changed", s.restInternalAgentsChanged)
 	mux.HandleFunc("POST /api/v1/internal/agents-settings-changed", s.restInternalAgentSettingsChanged)
+	// The admin module owns the capability catalogue and asks for this after a
+	// write, so every running agent re-pulls its catalogue.
+	mux.HandleFunc("POST /api/v1/internal/capabilities-changed", s.restInternalCapabilitiesChanged)
 	mux.HandleFunc("GET /api/v1/runners", s.restListRunners)
 	mux.HandleFunc("GET /api/v1/runners/counts", s.restCountRunners)
 	// The console's own view of the same collection: it may omit the user (the

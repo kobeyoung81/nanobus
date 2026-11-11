@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/mcpprobe"
-	"gitee.com/kobeyoung81/nanobus/internal/skillbundle"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
@@ -404,129 +403,20 @@ func skillDef(rec store.SkillRecord) nanoprotocol.SkillDef {
 		CreatedBy:        rec.CreatedBy,
 	}
 }
-
 func (s *Server) restListSkillsAdmin(w http.ResponseWriter, r *http.Request) {
-	recs, err := s.store.ListSkills("")
-	if err != nil {
-		slog.Error("list skills", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	out := make([]nanoprotocol.SkillDef, 0, len(recs))
-	for _, rec := range recs {
-		out = append(out, skillDef(rec))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"skills": out, "count": len(out)})
+	s.forwardToAdmin(w, r, "GET", "/api/v1/capabilities/skills")
 }
-
 func (s *Server) restCreateSkillAdmin(w http.ResponseWriter, r *http.Request) {
-	var body skillBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if body.Name == "" || len(body.Files) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and files are required"})
-		return
-	}
-	if taken, err := s.store.SkillNameTaken(body.Name, "", ""); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	} else if taken {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "a skill with this name already exists"})
-		return
-	}
-	rec := body.record("platform", "")
-	rec.ContentHash = skillbundle.ContentHash(body.Files)
-	if err := s.store.CreateSkill(rec); err != nil {
-		slog.Error("create skill", "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	s.emitCapabilitiesChanged("skill")
-	s.recordAudit(r, "capabilities.skill.create", "skill", rec.ID, nil)
-	writeJSON(w, http.StatusCreated, map[string]string{"id": rec.ID, "status": "created"})
+	s.forwardToAdmin(w, r, "POST", "/api/v1/capabilities/skills")
 }
-
 func (s *Server) restUpdateSkillAdmin(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var body skillBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	rec := body.record("platform", "")
-	rec.ID = id
-	existing, err := s.store.GetSkill(id)
-	if err != nil || existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "skill not found"})
-		return
-	}
-	if existing.Origin == "bundled" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "bundled skills are read-only"})
-		return
-	}
-	if taken, terr := s.store.SkillNameTaken(body.Name, "", id); terr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	} else if taken {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "a skill with this name already exists"})
-		return
-	}
-	rec.Origin = existing.Origin
-	rec.Version = existing.Version + 1
-	rec.PublishedVersion = existing.PublishedVersion + 1
-	rec.Status = "published"
-	rec.ContentHash = skillbundle.ContentHash(body.Files)
-	if err := s.store.UpdateSkill(id, rec); err != nil {
-		slog.Error("update skill", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	s.emitCapabilitiesChanged("skill")
-	s.recordAudit(r, "capabilities.skill.update", "skill", id, nil)
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+	s.forwardToAdmin(w, r, "PUT", "/api/v1/capabilities/skills/"+url.PathEscape(r.PathValue("id")))
 }
-
-// restUpdateSkillState updates only the definition-plane default (default_enabled
-// / locked) for a skill. It works for read-only bundled skills too, whose content
-// cannot be edited but whose availability baseline is platform-managed.
 func (s *Server) restUpdateSkillState(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var body builtinStateBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if err := s.store.UpdateSkillState(id, body.DefaultEnabled, body.Locked); err != nil {
-		slog.Error("update skill state", "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	s.emitCapabilitiesChanged("skill")
-	s.recordAudit(r, "capabilities.skill.state", "skill", id, nil)
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+	s.forwardToAdmin(w, r, "PUT", "/api/v1/capabilities/skills/"+url.PathEscape(r.PathValue("id"))+"/state")
 }
-
 func (s *Server) restDeleteSkillAdmin(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	existing, err := s.store.GetSkill(id)
-	if err != nil || existing == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "skill not found"})
-		return
-	}
-	if existing.Origin == "bundled" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "bundled skills are read-only"})
-		return
-	}
-	if err := s.store.DeleteSkill(id, "", "platform"); err != nil {
-		slog.Error("delete skill", "error", err)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "skill not found"})
-		return
-	}
-	s.emitCapabilitiesChanged("skill")
-	s.recordAudit(r, "capabilities.skill.delete", "skill", id, nil)
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+	s.forwardToAdmin(w, r, "DELETE", "/api/v1/capabilities/skills/"+url.PathEscape(r.PathValue("id")))
 }
 
 // ======== user-scoped library ========
@@ -624,113 +514,17 @@ func (s *Server) restDeleteMyMcp(w http.ResponseWriter, r *http.Request) {
 	s.recordAudit(r, "capabilities.mcp.delete", "mcp", id, map[string]any{"user_id": userID})
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
 }
-
 func (s *Server) restListMySkills(w http.ResponseWriter, r *http.Request) {
-	userID := userIDFromQuery(r)
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	recs, err := s.store.ListSkills(userID)
-	if err != nil {
-		slog.Error("list my skills", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	out := make([]nanoprotocol.SkillDef, 0, len(recs))
-	for _, rec := range recs {
-		out = append(out, skillDef(rec))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"skills": out, "count": len(out)})
+	s.forwardToAdmin(w, r, "GET", "/api/v1/user/capabilities/library/skills?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
-
 func (s *Server) restCreateMySkill(w http.ResponseWriter, r *http.Request) {
-	userID := userIDFromQuery(r)
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	var body skillBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if body.Name == "" || len(body.Files) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and files are required"})
-		return
-	}
-	if taken, err := s.store.SkillNameTaken(body.Name, userID, ""); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	} else if taken {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "a skill with this name already exists"})
-		return
-	}
-	rec := body.record("user", userID)
-	rec.ContentHash = skillbundle.ContentHash(body.Files)
-	if err := s.store.CreateSkill(rec); err != nil {
-		slog.Error("create my skill", "error", err)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	s.emitCapabilitiesChanged("skill")
-	s.recordAudit(r, "capabilities.skill.create", "skill", rec.ID, map[string]any{"user_id": userID})
-	writeJSON(w, http.StatusCreated, map[string]string{"id": rec.ID, "status": "created"})
+	s.forwardToAdmin(w, r, "POST", "/api/v1/user/capabilities/library/skills?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
-
 func (s *Server) restUpdateMySkill(w http.ResponseWriter, r *http.Request) {
-	userID, id := userIDFromQuery(r), r.PathValue("id")
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	rec, err := s.store.GetSkill(id)
-	if err != nil || rec == nil || rec.Scope != "user" || rec.OwnerUserID != userID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "skill not found"})
-		return
-	}
-	var body skillBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	upd := body.record("user", userID)
-	upd.ID = id
-	upd.ContentHash = skillbundle.ContentHash(body.Files)
-	if taken, terr := s.store.SkillNameTaken(upd.Name, userID, id); terr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	} else if taken {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "a skill with this name already exists"})
-		return
-	}
-	upd.Origin = rec.Origin
-	upd.Version = rec.Version
-	upd.PublishedVersion = rec.PublishedVersion
-	upd.CreatedBy = rec.CreatedBy
-	if err := s.store.UpdateSkill(id, upd); err != nil {
-		slog.Error("update my skill", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	s.emitCapabilitiesChanged("skill")
-	s.recordAudit(r, "capabilities.skill.update", "skill", id, map[string]any{"user_id": userID})
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "updated"})
+	s.forwardToAdmin(w, r, "PUT", "/api/v1/user/capabilities/library/skills/"+url.PathEscape(r.PathValue("id"))+"?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
-
 func (s *Server) restDeleteMySkill(w http.ResponseWriter, r *http.Request) {
-	userID, id := userIDFromQuery(r), r.PathValue("id")
-	if userID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
-		return
-	}
-	if err := s.store.DeleteSkill(id, userID, "user"); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "skill not found"})
-		return
-	}
-	s.emitCapabilitiesChanged("skill")
-	s.recordAudit(r, "capabilities.skill.delete", "skill", id, map[string]any{"user_id": userID})
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+	s.forwardToAdmin(w, r, "DELETE", "/api/v1/user/capabilities/library/skills/"+url.PathEscape(r.PathValue("id"))+"?user_id="+url.QueryEscape(userIDFromQuery(r)))
 }
 
 // ======== per-agent capabilities ========
@@ -987,4 +781,25 @@ func (s *Server) restDeleteAgentCapability(w http.ResponseWriter, r *http.Reques
 	s.emitCapabilitiesChanged(kind)
 	s.recordAudit(r, "capabilities.agent.delete", kind, agentID, map[string]any{"ref": ref, "user_id": userID})
 	writeJSON(w, http.StatusOK, map[string]string{"agent_id": agentID, "status": "deleted"})
+}
+
+// forwardToAdmin relays one console/user request to the module that owns the
+// catalogue, preserving the method, body and query, and passing the admin
+// module's own status back.
+func (s *Server) forwardToAdmin(w http.ResponseWriter, r *http.Request, method, path string) {
+	if s.admin == nil || !s.admin.Enabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "admin module is not configured"})
+		return
+	}
+	status, body, err := s.admin.Do(r.Context(), method, path, r.Body, r.Header.Get("Content-Type"))
+	if err != nil {
+		slog.Error("forward to admin", "path", path, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "admin unavailable"})
+		return
+	}
+	if ct := "application/json"; ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }

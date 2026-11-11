@@ -61,6 +61,35 @@ func (c *Client) do(req *http.Request, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+// Do sends one request with the caller's body and returns the answer as-is, so a
+// forwarding handler can pass the admin module's status and payload through.
+func (c *Client) Do(ctx context.Context, method, path string, body io.Reader, contentType string) (int, []byte, error) {
+	if !c.Enabled() {
+		return 0, nil, fmt.Errorf("admin module is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("call admin %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, data, nil
+}
+
 // GetJSON reads one admin endpoint into out.
 func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
 	if !c.Enabled() {
