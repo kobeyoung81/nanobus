@@ -1,30 +1,18 @@
 package server
 
 import (
-	"encoding/json"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
-	"strconv"
-	"strings"
+	"time"
 
-	"gitee.com/kobeyoung81/nanobus/internal/store"
+	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 )
 
-// searchTermLimit bounds one free-text condition. A fragment long enough to
-// matter is far shorter than this; the cap keeps a pasted document from becoming
-// a pattern.
-const searchTermLimit = 128
-
-// searchTerm reads one filter parameter: trimmed, and capped in runes so a
-// multi-byte fragment is never cut mid-character.
-func searchTerm(r *http.Request, key string) string {
-	value := strings.TrimSpace(r.URL.Query().Get(key))
-	if runes := []rune(value); len(runes) > searchTermLimit {
-		return strings.TrimSpace(string(runes[:searchTermLimit]))
-	}
-	return value
-}
+// auditWriteTimeout bounds one best-effort append. The write must not hold a
+// handler open behind a slow admin module: the action has already happened.
+const auditWriteTimeout = 5 * time.Second
 
 // clientIP extracts the client IP, honoring X-Forwarded-For.
 func clientIP(r *http.Request) string {
@@ -41,9 +29,13 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// recordAudit writes an audit entry for a mutating request.
+// recordAudit reports one of the bus's own actions to the audit trail.
+//
+// The trail is the admin module's collection; this handler forwards, and a
+// failure is a warning rather than an error — the action it describes has
+// already been carried out.
 func (s *Server) recordAudit(r *http.Request, action, resourceType, resourceID string, detail map[string]any) {
-	entry := store.AuditEntry{
+	entry := adminclient.AuditEntry{
 		ActorID:      r.Header.Get("X-Admin-User"),
 		ActorRole:    r.Header.Get("X-Admin-Role"),
 		Action:       action,
@@ -58,67 +50,31 @@ func (s *Server) recordAudit(r *http.Request, action, resourceType, resourceID s
 	if entry.ActorRole == "" {
 		entry.ActorRole = "service"
 	}
-	if err := s.store.RecordAudit(entry); err != nil {
+	if s.admin == nil || !s.admin.Enabled() {
+		slog.Warn("record audit skipped: admin module is not configured", "action", action)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), auditWriteTimeout)
+	defer cancel()
+	if err := s.admin.RecordAudit(ctx, entry); err != nil {
 		slog.Warn("record audit failed", "action", action, "error", err)
 	}
 }
 
+// restListAudit forwards the trail to the admin module, which owns it.
+//
+// The route is kept so a caller that still addresses the bus keeps working; the
+// console asks the admin module directly through the portal.
 func (s *Server) restListAudit(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, err := s.store.ListAudit(store.AuditFilter{
-		Limit:        limit,
-		Action:       searchTerm(r, "action"),
-		Actor:        searchTerm(r, "actor"),
-		ResourceType: searchTerm(r, "resource_type"),
-		Resource:     searchTerm(r, "resource"),
-	})
-	if err != nil {
-		slog.Error("list audit", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
+	path := "/api/v1/audit"
+	if query := r.URL.RawQuery; query != "" {
+		path += "?" + query
 	}
-	entries = nonNilSlice(entries)
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+	s.forwardToAdmin(w, r, http.MethodGet, path)
 }
 
-// restRecordAudit appends one entry to the trail.
-//
-// The portal writes these when an administrator does something; it used to do it
-// with its own INSERT, which made the trail's schema a contract between the two
-// services. The entry's fields are the portal's, and the timestamp is the bus's.
+// restRecordAudit forwards one append to the admin module. The body is the
+// entry shape both faces share; the admin module assigns the id and the time.
 func (s *Server) restRecordAudit(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		ActorID      string         `json:"actor_id"`
-		ActorRole    string         `json:"actor_role"`
-		Action       string         `json:"action"`
-		ResourceType string         `json:"resource_type"`
-		ResourceID   string         `json:"resource_id"`
-		Detail       map[string]any `json:"detail,omitempty"`
-		IP           string         `json:"ip"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		return
-	}
-	if body.Action == "" || body.ResourceType == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action and resource_type are required"})
-		return
-	}
-	if body.ActorID == "" {
-		body.ActorID = "system"
-	}
-	if body.ActorRole == "" {
-		body.ActorRole = "service"
-	}
-
-	if err := s.store.RecordAudit(store.AuditEntry{
-		ActorID: body.ActorID, ActorRole: body.ActorRole, Action: body.Action,
-		ResourceType: body.ResourceType, ResourceID: body.ResourceID,
-		Detail: body.Detail, IP: body.IP,
-	}); err != nil {
-		slog.Error("record audit", "action", body.Action, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "recorded"})
+	s.forwardToAdmin(w, r, http.MethodPost, "/api/v1/internal/audit")
 }

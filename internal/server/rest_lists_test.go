@@ -26,11 +26,12 @@ func TestRestListBuiltin_EmptyCatalogIsAnArray(t *testing.T) {
 	}
 }
 
-func TestRestListAuditAndRules_EmptyAreArrays(t *testing.T) {
+func TestRestListAlertRules_EmptyIsAnArray(t *testing.T) {
 	s := testServerMongo(t)
 
+	// The audit trail is the admin module's now (this service forwards it), so
+	// only the rules are still served from here.
 	for _, tc := range []struct{ path, field string }{
-		{"/api/v1/audit", "entries"},
 		{"/api/v1/alert-rules", "rules"},
 	} {
 		code, body := call(t, s, http.MethodGet, tc.path, "")

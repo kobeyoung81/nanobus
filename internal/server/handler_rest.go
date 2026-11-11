@@ -137,7 +137,8 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// Auth reverse proxy → nanoauth
 	s.registerAuthProxy(mux)
 
-	// Enterprise admin: audit trail (alert rules live in the admin module).
+	// Enterprise admin: the audit trail is the admin module's collection; these
+	// two routes forward to it, so a caller that addresses the bus still works.
 	mux.HandleFunc("GET /api/v1/audit", s.restListAudit)
 	mux.HandleFunc("POST /api/v1/audit", s.restRecordAudit)
 
