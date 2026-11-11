@@ -107,7 +107,9 @@ func TestResolveCapabilities_SkillUpdateAvailability(t *testing.T) {
 	storetest.SeedUser(t, s, "u-1", "pro", 1)
 	seedAgentDoc(t, s, "agent-1", "u-1", "build")
 
-	id := store.BundledSkillID("weather")
+	// The bundled-id format, spelled here: the seeder that defines it is the
+	// admin module's now, and the read only needs a row that looks like its output.
+	id := "skill:bundled-weather"
 	if err := s.CreateSkill(store.SkillRecord{
 		Capability: store.Capability{ID: id, Scope: "platform", Name: "weather", DefaultEnabled: true},
 		Files:      map[string]string{"SKILL.md": "body"},
