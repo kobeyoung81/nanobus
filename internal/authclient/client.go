@@ -239,6 +239,7 @@ type Account struct {
 	Tier               string `json:"tier"`
 	MustChangePassword bool   `json:"must_change_password"`
 	PreferredLanguage  string `json:"preferred_language"`
+	UpdatedAt          string `json:"updated_at"`
 }
 
 // AccountPatch names the fields a request may change; nil means "not mentioned".

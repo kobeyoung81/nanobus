@@ -129,12 +129,17 @@ func remoteSummary(a *authclient.Account) *UserSummary {
 	if a == nil {
 		return nil
 	}
-	return &UserSummary{
+	sum := &UserSummary{
 		ID: a.UserID, DisplayName: a.DisplayName, Email: a.Email,
 		Role: a.Role, Status: a.Status, Tier: a.Tier,
 		MustChangePassword: a.MustChangePassword,
 		PreferredLanguage:  a.PreferredLanguage,
 	}
+	// The console shows "last changed"; the module sends it as RFC3339.
+	if parsed, err := time.Parse(time.RFC3339Nano, a.UpdatedAt); err == nil {
+		sum.UpdatedAt = parsed
+	}
+	return sum
 }
 
 func remoteSummaries(accounts []authclient.Account) []UserSummary {
