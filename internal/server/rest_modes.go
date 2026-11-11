@@ -86,7 +86,7 @@ func (s *Server) restSetAgentMode(w http.ResponseWriter, r *http.Request) {
 			"settings":       body.Settings,
 		}, nil); err != nil {
 		slog.Error("set agent mode override", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
+		writeAdminFailure(w, err)
 		return
 	}
 	s.emitAgentSettingsChanged(agentID)

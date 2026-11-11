@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +13,31 @@ import (
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
+
+// adminErrorMessage pulls the {"error": …} a rejected call carries, falling back
+// to the raw body so a proxy's HTML page is still reportable.
+func adminErrorMessage(data []byte) string {
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &payload); err == nil && payload.Error != "" {
+		return payload.Error
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// writeAdminFailure answers with the admin module's own rejection when the
+// request was the problem, and reports an unavailable module otherwise: a
+// read-only permission the catalogue refuses is the caller's mistake, not an
+// outage.
+func writeAdminFailure(w http.ResponseWriter, err error) {
+	var rejected *adminStatusError
+	if errors.As(err, &rejected) && rejected.Status < http.StatusInternalServerError {
+		writeJSON(w, rejected.Status, map[string]string{"error": rejected.Message})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
+}
 
 // handleListAgentTypes returns agent definitions; session_only restricts the
 // result to session-capable definitions.
@@ -136,6 +162,18 @@ func (s *Server) adminPut(path string, body, out any) error {
 	return s.adminSend(http.MethodPut, path, body, out)
 }
 
+// adminStatusError carries the admin module's verdict, so a caller can pass a
+// rejection through instead of reporting every failure as "unavailable". The
+// message is the module's own, which is what the console shows.
+type adminStatusError struct {
+	Status  int
+	Message string
+}
+
+func (e *adminStatusError) Error() string {
+	return fmt.Sprintf("the admin module answered %d: %s", e.Status, e.Message)
+}
+
 // adminSend posts a JSON body to the admin module and decodes the answer.
 func (s *Server) adminSend(method, path string, body, out any) error {
 	if s.admin == nil || !s.admin.Enabled() {
@@ -152,7 +190,7 @@ func (s *Server) adminSend(method, path string, body, out any) error {
 		return err
 	}
 	if status >= http.StatusBadRequest {
-		return fmt.Errorf("catalogue rejected the write (%d): %s", status, bytes.TrimSpace(data))
+		return &adminStatusError{Status: status, Message: adminErrorMessage(data)}
 	}
 	if out == nil {
 		return nil

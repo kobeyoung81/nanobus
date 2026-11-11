@@ -2,11 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
@@ -162,5 +164,33 @@ func TestHandleSetAgentPermission_ReportsARefusedWrite(t *testing.T) {
 	resp := s.handleSetAgentPermission(msg)
 	if resp == nil || resp.Error == "" {
 		t.Fatalf("response = %+v, want an error", resp)
+	}
+}
+
+// TestRestSetAgentPermissions_PassesARejectionThrough: a read-only key the
+// catalogue refuses is the caller's mistake, so the console must see the reason
+// instead of a generic "catalogue unavailable" — the write neither happened nor
+// was the module down.
+func TestRestSetAgentPermissions_PassesARejectionThrough(t *testing.T) {
+	s := testServerMongo(t)
+	seedAgent(t, s, "agent-1", "user-1", "active")
+	var calls []forwardedCall
+	rejection := `{"error":"permission key \"read\" is read-only and must remain \"allow\""}`
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		calls = append(calls, forwardedCall{r.Method, r.URL.Path, string(body)})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(rejection))
+	}))
+	t.Cleanup(stub.Close)
+	s.admin = adminclient.New(stub.URL, "test-token")
+
+	rec := putPermissions(t, s, `{"type_id":"build","permissions":[{"pattern":"read","action":"deny"}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "read-only") {
+		t.Fatalf("the refusal lost its reason: %s", rec.Body.String())
 	}
 }

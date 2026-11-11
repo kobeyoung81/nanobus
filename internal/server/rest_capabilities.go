@@ -542,7 +542,7 @@ func (s *Server) restSetAgentPermissions(w http.ResponseWriter, r *http.Request)
 		"type_id": typeID, "permissions": body.Permissions,
 	}, nil); err != nil {
 		slog.Error("set agent permissions", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "catalogue unavailable"})
+		writeAdminFailure(w, err)
 		return
 	}
 	s.emitCapabilitiesChanged("permissions")
