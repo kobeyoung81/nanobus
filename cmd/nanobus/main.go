@@ -15,7 +15,6 @@ import (
 	"gitee.com/kobeyoung81/nanobus/internal/config"
 	buslog "gitee.com/kobeyoung81/nanobus/internal/log"
 	"gitee.com/kobeyoung81/nanobus/internal/server"
-	"gitee.com/kobeyoung81/nanobus/internal/skillbundle"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	migrationsmongo "gitee.com/kobeyoung81/nanobus/migrations-mongo"
 	"gitee.com/kobeyoung81/nanoprotocol"
@@ -105,7 +104,6 @@ for gateway and agent connections.`,
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "path to bus config file")
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newUserCmd(&configPath))
-	rootCmd.AddCommand(newSkillsCmd(&configPath))
 	rootCmd.AddCommand(newMcpCmd(&configPath))
 	rootCmd.AddCommand(newMigrateCmd(&configPath))
 
@@ -197,59 +195,6 @@ Examples:
 				return fmt.Errorf("link channel: %w", err)
 			}
 			fmt.Printf("Linked %s/%s to user %q.\n", channel, senderID, userID)
-			return nil
-		},
-	}
-}
-
-func newSkillsCmd(configPath *string) *cobra.Command {
-	skillsCmd := &cobra.Command{
-		Use:   "skills",
-		Short: "Manage the bundled skill catalog",
-	}
-	skillsCmd.AddCommand(newSkillsSeedCmd(configPath))
-	return skillsCmd
-}
-
-func newSkillsSeedCmd(configPath *string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "seed",
-		Short: "Seed bundled skill packages into the platform catalog",
-		Long: `Upserts the read-only skills shipped with this binary into the platform
-catalog (origin='bundled'). Re-running is safe: content is updated only when the
-bundle version advances, and per-type baselines and per-user acks are preserved.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openStore(configPath)
-			if err != nil {
-				return err
-			}
-			defer s.Close()
-
-			bundled, err := skillbundle.Load()
-			if err != nil {
-				return fmt.Errorf("load skill bundle: %w", err)
-			}
-			defs := make([]nanoprotocol.SkillDef, 0, len(bundled))
-			for _, b := range bundled {
-				defs = append(defs, nanoprotocol.SkillDef{
-					ID:               store.BundledSkillID(b.Name),
-					Scope:            "platform",
-					Name:             b.Name,
-					Description:      b.Description,
-					Files:            b.Files,
-					Origin:           "bundled",
-					Status:           "published",
-					Version:          b.Version,
-					PublishedVersion: b.Version,
-					ContentHash:      b.ContentHash,
-					CreatedBy:        "nanobus",
-				})
-			}
-			inserted, updated, err := s.SeedPlatformSkills(defs)
-			if err != nil {
-				return fmt.Errorf("seed skills: %w", err)
-			}
-			fmt.Printf("Seeded %d bundled skill(s) (%d new, %d updated).\n", len(defs), inserted, updated)
 			return nil
 		},
 	}
