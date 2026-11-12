@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -122,6 +123,27 @@ func (s *Store) ResolveUserBinding(channel, senderID string) (ResolvedBinding, e
 		return resolved, nil
 	}
 
+	// A new account has no agent: the console creates the first one, and a channel
+	// identity never opens the console. Ask the agent rows' owner for a default
+	// one first, so the container that is about to be provisioned has something to
+	// run. A failure is logged rather than fatal — the account and the binding are
+	// still useful, and the console can create the agent by hand — but it means
+	// this user will not be answered until one exists.
+	agentID := ""
+	if s.agents != nil && s.agents.Enabled() {
+		ensureCtx, cancelEnsure := accountContext()
+		agentID, err = s.agents.EnsureDefaultAgent(ensureCtx, resolved.UserID)
+		cancelEnsure()
+		if err != nil {
+			slog.Warn("could not create the new account's default agent",
+				"user_id", resolved.UserID, "binding_id", resolved.BindingID, "error", err)
+			agentID = ""
+		}
+	}
+	if agentID == "" {
+		agentID = bindingAgentID(resolved.BindingID)
+	}
+
 	// The container request is the provisioning queue's, not identity's, so the
 	// onboarding path asks its owner. A failure here leaves a working binding whose
 	// container has not been asked for — the recoverable direction, because the
@@ -129,7 +151,7 @@ func (s *Store) ResolveUserBinding(channel, senderID string) (ResolvedBinding, e
 	if s.containers != nil && s.containers.Enabled() {
 		enqueueCtx, cancelEnqueue := accountContext()
 		defer cancelEnqueue()
-		if err := s.containers.Enqueue(enqueueCtx, resolved.UserID, resolved.BindingID, bindingAgentID(resolved.BindingID), "free"); err != nil {
+		if err := s.containers.Enqueue(enqueueCtx, resolved.UserID, resolved.BindingID, agentID, "free"); err != nil {
 			return ResolvedBinding{}, fmt.Errorf("enqueue container for %s: %w", resolved.UserID, err)
 		}
 	}
@@ -398,6 +420,17 @@ type ContainerEnqueuer interface {
 // accounts but asks for no container, which is what a deployment without a
 // provisioner gets.
 func (s *Store) SetContainerEnqueuer(e ContainerEnqueuer) { s.containers = e }
+
+// AgentEnsurer is the agent rows' owner, as onboarding needs it: "make sure this
+// account has an agent, and tell me which one".
+type AgentEnsurer interface {
+	Enabled() bool
+	EnsureDefaultAgent(ctx context.Context, userID string) (string, error)
+}
+
+// SetAgentEnsurer wires the portal. Without it onboarding creates accounts with
+// no agent, which is what the deployment had before this hook existed.
+func (s *Store) SetAgentEnsurer(e AgentEnsurer) { s.agents = e }
 
 // UserIDForBinding answers whose binding id this is.
 func (s *Store) UserIDForBinding(bindingID int64) (string, error) {

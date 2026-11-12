@@ -63,15 +63,36 @@ func (c *Client) Reprovision(ctx context.Context, userID string) error {
 	return c.post(ctx, "/api/v1/internal/containers/"+url.PathEscape(userID)+"/reprovision", map[string]any{})
 }
 
+// RegisterRunner asks the registry's owner to record (or refresh) a runner. The
+// runner registers itself too; this path stays for older runners that still call
+// the bus's endpoint.
+func (c *Client) RegisterRunner(ctx context.Context, runnerID, hostname, dockerHost string) error {
+	body := map[string]string{"runner_id": runnerID, "hostname": hostname, "docker_host": dockerHost}
+	return c.do(ctx, http.MethodPost, "/api/v1/internal/runners", body)
+}
+
+// DeleteRunner prunes a dead runner row.
+func (c *Client) DeleteRunner(ctx context.Context, runnerID string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/internal/runners/"+url.PathEscape(runnerID), nil)
+}
+
 func (c *Client) post(ctx context.Context, path string, body any) error {
+	return c.do(ctx, http.MethodPost, path, body)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body any) error {
 	if !c.Enabled() {
 		return fmt.Errorf("the provisioner module is not configured")
 	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
 		return err
 	}

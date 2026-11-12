@@ -466,7 +466,9 @@ func (s *Server) handleRegisterRunner(msg nanoprotocol.Message) *nanoprotocol.Me
 		return &resp
 	}
 
-	if err := s.store.RegisterRunner(req.RunnerID, req.Hostname, req.DockerHost); err != nil {
+	// The registry belongs to the provisioner: this service keeps the door older
+	// runners knock on and forwards the write.
+	if err := s.forwardRunnerRegistration(req); err != nil {
 		slog.Error("register runner failed", "error", err)
 		resp := nanoprotocol.NewErrorMessage("register runner: " + err.Error())
 		return &resp

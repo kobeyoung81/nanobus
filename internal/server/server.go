@@ -45,8 +45,6 @@ type Server struct {
 	internalToken     string
 	maxContentBytes   int
 	mu                sync.Mutex
-	sweeperStop       chan struct{}
-	stopOnce          sync.Once
 }
 
 // DefaultMaxContentBytes bounds a single message's content when no option is
@@ -177,7 +175,6 @@ func NewServer(s *store.Store, opts ...ServerOption) *Server {
 		terminalSubs:      newTerminalSubRegistry(),
 		voiceSessions:     newVoiceSessionRegistry(voiceSessionTTL),
 		maxContentBytes:   DefaultMaxContentBytes,
-		sweeperStop:       make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(server)
@@ -222,9 +219,6 @@ func (s *Server) ListenAndServe(addr string) error {
 
 	s.srv = &http.Server{Handler: s.handler()}
 
-	// Start the runner-uptime sweeper (marks stale runners offline).
-	go s.runRunnerSweeper(s.sweeperStop)
-
 	return s.srv.Serve(ln)
 }
 
@@ -247,28 +241,6 @@ func (s *Server) protectedRequest(r *http.Request) bool {
 	return r.URL.Path != voiceWSPath && !isDirectoryConsolePath(r.URL.Path)
 }
 
-// runRunnerSweeper periodically marks runners whose heartbeat has gone stale
-// as offline. It never deletes rows; operators prune dead runners explicitly.
-func (s *Server) runRunnerSweeper(stop <-chan struct{}) {
-	if err := s.store.MarkStaleRunnersOffline(); err != nil {
-		slog.Warn("runner sweeper: initial sweep failed", "error", err)
-	}
-
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			if err := s.store.MarkStaleRunnersOffline(); err != nil {
-				slog.Warn("runner sweeper: sweep failed", "error", err)
-			}
-		}
-	}
-}
-
 // Addr returns the listener address, or empty string if not listening.
 func (s *Server) Addr() string {
 	s.mu.Lock()
@@ -281,9 +253,6 @@ func (s *Server) Addr() string {
 
 // Close gracefully shuts down the server.
 func (s *Server) Close() error {
-	s.stopOnce.Do(func() {
-		close(s.sweeperStop)
-	})
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.srv != nil {

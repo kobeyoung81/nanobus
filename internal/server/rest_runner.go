@@ -58,9 +58,11 @@ func (s *Server) restRegisterRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.RegisterRunner(req.RunnerID, req.Hostname, req.DockerHost); err != nil {
-		slog.Error("register runner", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
+		return c.RegisterRunner(ctx, req.RunnerID, req.Hostname, req.DockerHost)
+	}); err != nil {
+		slog.Error("register runner", "runner_id", req.RunnerID, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provisioner unavailable"})
 		return
 	}
 
@@ -74,13 +76,26 @@ func (s *Server) restDeleteRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.DeleteRunner(id); err != nil {
+	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
+		return c.DeleteRunner(ctx, id)
+	}); err != nil {
 		slog.Error("delete runner", "id", id, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "provisioner unavailable"})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "deleted"})
+}
+
+// forwardRunnerRegistration hands a runner's self-registration to the registry's
+// owner. Runners that predate the move still call this service's RPC.
+func (s *Server) forwardRunnerRegistration(req nanoprotocol.RegisterRunnerRequest) error {
+	if s.provisioner == nil || !s.provisioner.Enabled() {
+		return fmt.Errorf("the provisioner module is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return s.provisioner.RegisterRunner(ctx, req.RunnerID, req.Hostname, req.DockerHost)
 }
 
 // callProvisioner runs one forwarded action against the runner's API.

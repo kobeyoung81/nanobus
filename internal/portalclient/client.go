@@ -59,6 +59,23 @@ func (c *Client) ClearTypeRefs(ctx context.Context, typeID string) (int, error) 
 	return out.Cleared, nil
 }
 
+// EnsureDefaultAgent makes sure an account has an agent and returns it. Onboarding
+// uses it: an account created by a channel identity arrives without one, and a
+// container with no agent answers nothing.
+func (c *Client) EnsureDefaultAgent(ctx context.Context, userID string) (string, error) {
+	var out struct {
+		AgentID string `json:"agent_id"`
+	}
+	path := "/internal/v1/users/" + url.PathEscape(userID) + "/agents/ensure"
+	if err := c.post(ctx, path, map[string]any{}, &out); err != nil {
+		return "", err
+	}
+	if out.AgentID == "" {
+		return "", fmt.Errorf("the portal answered an empty agent id for %s", userID)
+	}
+	return out.AgentID, nil
+}
+
 // GetJSON reads one internal endpoint.
 func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
 	req, err := c.request(ctx, http.MethodGet, path, nil)

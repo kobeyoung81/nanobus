@@ -33,6 +33,9 @@ type Store struct {
 	// containers is the provisioning queue, which onboarding asks for a new
 	// account's container.
 	containers ContainerEnqueuer
+	// agents is the agent rows' owner — the portal. Onboarding asks it to make
+	// sure a brand-new account has an agent to answer with.
+	agents AgentEnsurer
 }
 
 // Open connects to MongoDB and returns a Store. It pings the server so a bad URI

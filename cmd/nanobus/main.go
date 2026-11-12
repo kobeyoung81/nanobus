@@ -12,6 +12,7 @@ import (
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/config"
 	buslog "gitee.com/kobeyoung81/nanobus/internal/log"
+	"gitee.com/kobeyoung81/nanobus/internal/portalclient"
 	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanobus/internal/server"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
@@ -58,6 +59,10 @@ for gateway and agent connections.`,
 			// onboarding when it creates an account.
 			s.SetAccountBackend(store.NewRemoteAccounts(authclient.New(cfg.Nanoauth.BaseURL, cfg.InternalToken)))
 			s.SetContainerEnqueuer(provisionerclient.New(cfg.Provisioner.BaseURL, cfg.InternalToken))
+			// Onboarding gives a new account an agent before asking for its
+			// container: the rows are the portal's, and a container with no agent
+			// answers nothing.
+			s.SetAgentEnsurer(portalclient.New(cfg.Portal.BaseURL, cfg.InternalToken))
 
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
