@@ -6,11 +6,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+
+	"gitee.com/kobeyoung81/nanobus/internal/store"
 )
 
 // call runs one request against the REST mux and returns the status and body.
@@ -34,14 +37,20 @@ func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 // the account by the address that was typed, then rename it.
 func TestRestUserAccounts_EmailLookupAndRename(t *testing.T) {
 	s := testServerMongo(t)
-
-	code, body := call(t, s, http.MethodPost, "/api/v1/users",
-		`{"id":"u-1","display_name":"Kobe","email":"kobeyoung81@sina.com","password_hash":"bcrypt-hash"}`)
-	if code != http.StatusCreated {
-		t.Fatalf("create: %d %s", code, body)
+	fake := fakeAccountsFor(t, s)
+	// The account is written by its owner now; this surface only reads it.
+	if err := fake.Register(context.Background(), "u-1", "Kobe"); err != nil {
+		t.Fatalf("seed the account: %v", err)
+	}
+	email := "kobeyoung81@sina.com"
+	if err := fake.Patch(context.Background(), "u-1", store.AccountPatch{Email: &email}); err != nil {
+		t.Fatalf("seed the address: %v", err)
+	}
+	if err := fake.SetPassword(context.Background(), "u-1", "bcrypt-hash", false, false); err != nil {
+		t.Fatalf("seed the credential: %v", err)
 	}
 
-	code, body = call(t, s, http.MethodGet, "/api/v1/user-accounts?email=kobeyoung81@sina.com", "")
+	code, body := call(t, s, http.MethodGet, "/api/v1/user-accounts?email=kobeyoung81@sina.com", "")
 	if code != http.StatusOK || !strings.Contains(body, `"user_id":"u-1"`) {
 		t.Fatalf("lookup: %d %s", code, body)
 	}
@@ -63,12 +72,5 @@ func TestRestUserAccounts_EmailLookupAndRename(t *testing.T) {
 	}
 	if code, body = call(t, s, http.MethodGet, "/api/v1/user-accounts/u-1", ""); !strings.Contains(body, "Renamed") {
 		t.Fatalf("rename did not stick: %d %s", code, body)
-	}
-
-	// A second account cannot take the same address.
-	code, body = call(t, s, http.MethodPost, "/api/v1/users",
-		`{"id":"u-2","display_name":"Other","email":"kobeyoung81@sina.com"}`)
-	if code != http.StatusConflict {
-		t.Fatalf("a duplicate address should be 409, got %d %s", code, body)
 	}
 }

@@ -138,33 +138,6 @@ func TestRestResolveUser_Existing(t *testing.T) {
 	}
 }
 
-func TestRestCreateUser_Success(t *testing.T) {
-	// The registry is a collection now, so this asserts the effect: the user is
-	// read back through the store.
-	s := testServerMongo(t)
-
-	body := `{"id":"new-user-123","display_name":"New User"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	mux := http.NewServeMux()
-	s.registerRESTRoutes(mux)
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	users, err := s.store.ListUsers()
-	if err != nil {
-		t.Fatalf("ListUsers: %v", err)
-	}
-	if len(users) != 1 || users[0] != "new-user-123" {
-		t.Fatalf("the user was not registered: %v", users)
-	}
-}
-
 func TestRestListUsers(t *testing.T) {
 	s := testServerMongo(t)
 	storetest.SeedUser(t, s.store, "user-1", "pro", 1)

@@ -3,12 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 
 	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
-	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
@@ -56,7 +54,6 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 
 	// Users
 	mux.HandleFunc("POST /api/v1/users/resolve", s.restResolveUser)
-	mux.HandleFunc("POST /api/v1/users", s.restCreateUser)
 	mux.HandleFunc("GET /api/v1/users", s.restListUsers)
 	// Account administration, for the portal: it used to read `users` straight
 	// out of MySQL, which is what made one account two services' business.
@@ -251,53 +248,6 @@ func (s *Server) restResolveUser(w http.ResponseWriter, r *http.Request) {
 		"user_id": userID,
 		"is_new":  isNew,
 	})
-}
-
-func (s *Server) restCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID          string `json:"id"`
-		DisplayName string `json:"display_name"`
-		// The sign-in service's registration carries the address and a hash it
-		// produced itself: the bus stores credentials, it never sees a password.
-		Email              string `json:"email"`
-		PasswordHash       string `json:"password_hash"`
-		MustChangePassword bool   `json:"must_change_password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	if err := s.store.RegisterUser(req.ID, req.DisplayName); err != nil {
-		slog.Error("register user", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	if req.Email != "" {
-		if err := s.store.SetUserEmail(req.ID, req.Email); err != nil {
-			if errors.Is(err, store.ErrEmailTaken) {
-				writeJSON(w, http.StatusConflict, map[string]string{"error": "email already in use"})
-				return
-			}
-			slog.Error("set user email", "user_id", req.ID, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-			return
-		}
-	}
-	if req.PasswordHash != "" {
-		if err := s.store.SetUserPassword(req.ID, req.PasswordHash, req.MustChangePassword); err != nil {
-			slog.Error("set user password", "user_id", req.ID, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-			return
-		}
-	}
-
-	// The first account of a fresh installation becomes its administrator (see
-	// bootstrap_admin.go). This runs after the credentials exist so the account
-	// is usable the moment the sign-up returns.
-	s.maybeBootstrapAdmin(r, req.ID)
-
-	writeJSON(w, http.StatusCreated, map[string]string{"id": req.ID, "status": "created"})
 }
 
 func (s *Server) restListUsers(w http.ResponseWriter, r *http.Request) {
