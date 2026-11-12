@@ -1,0 +1,17 @@
+{
+  "collections": {
+    "bus_stream_events": {
+      "indexes": [
+        {
+          "name": "conversation",
+          "keys": [["channel", 1], ["chat_id", 1], ["_id", 1]]
+        },
+        {
+          "name": "expiry",
+          "keys": [["at", 1]],
+          "expireAfterSeconds": 600
+        }
+      ]
+    }
+  }
+}

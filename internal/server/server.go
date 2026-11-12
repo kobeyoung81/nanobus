@@ -24,16 +24,19 @@ import (
 
 // Server is the bus WebSocket server.
 type Server struct {
-	store             *store.Store
-	upgrader          websocket.Upgrader
-	listener          net.Listener
-	srv               *http.Server
-	nanoauthURL       string
-	auth              *authclient.Client
-	admin             *adminclient.Client
-	portal            *portalclient.Client
-	provisioner       *provisionerclient.Client
-	chunks            *stream.ChunkBuffer
+	store       *store.Store
+	upgrader    websocket.Upgrader
+	listener    net.Listener
+	srv         *http.Server
+	nanoauthURL string
+	auth        *authclient.Client
+	admin       *adminclient.Client
+	portal      *portalclient.Client
+	provisioner *provisionerclient.Client
+	chunks      *stream.ChunkBuffer
+	// streams is the durable, per-conversation event log. The in-memory ring
+	// above stays for gateways that still subscribe per channel.
+	streams           streamEventStore
 	sse               *sseHub
 	events            *sseHub
 	hypervisorTunnels *hypervisorTunnelRegistry
@@ -167,6 +170,7 @@ func NewServer(s *store.Store, opts ...ServerOption) *Server {
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 		chunks:            stream.NewChunkBuffer(1000),
+		streams:           streamStoreFor(s),
 		sse:               newSSEHub(),
 		events:            newSSEHub(),
 		hypervisorTunnels: newHypervisorTunnelRegistry(),

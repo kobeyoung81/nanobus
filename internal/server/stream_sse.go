@@ -69,12 +69,12 @@ func (h *sseHub) broadcast(subject string, ev stream.ChunkEvent) {
 }
 
 // writeSSEEvent writes a single SSE event and flushes.
-func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, id int, data any) error {
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, id any, data any) error {
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", eventType, id, b); err != nil {
+	if _, err := fmt.Fprintf(w, "event: %s\nid: %v\ndata: %s\n\n", eventType, id, b); err != nil {
 		return err
 	}
 	flusher.Flush()
@@ -89,7 +89,7 @@ type sseWriter struct {
 	f  http.Flusher
 }
 
-func (s *sseWriter) event(eventType string, id int, data any) error {
+func (s *sseWriter) event(eventType string, id any, data any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return writeSSEEvent(s.w, s.f, eventType, id, data)
@@ -151,6 +151,13 @@ func (s *Server) restOutboundStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	// Refuse before any bytes are written: once the SSE headers and the opening
+	// comment are out, an error answer is just a 200 with a strange body.
+	chatID := r.URL.Query().Get("chat_id")
+	if chatID != "" && s.streams == nil {
+		http.Error(w, "conversation streaming is not available", http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -161,7 +168,16 @@ func (s *Server) restOutboundStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flusher.Flush()
-	slog.Debug("outbound stream opened", "channel", channel)
+	slog.Debug("outbound stream opened", "channel", channel, "chat_id", r.URL.Query().Get("chat_id"))
+
+	// A conversation-scoped subscription reads the durable log: replay and live
+	// delivery are the same query, and a second bus replica can serve it.
+	if chatID != "" {
+		sw := &sseWriter{w: w, f: flusher}
+		go keepSSEAlive(r.Context(), sw)
+		s.streamConversation(r.Context(), sw, r, channel, chatID, r.Header.Get("Last-Event-ID"))
+		return
+	}
 
 	lastID, _ := strconv.Atoi(r.Header.Get("Last-Event-ID"))
 	// The IDs belong to *this process*: the ring's counter starts at 1 every time
@@ -219,8 +235,8 @@ func (s *Server) restOutboundChunk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channel := chunk.Channel
-	if channel == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel is required"})
+	if channel == "" || chunk.ChatID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel and chat_id are required"})
 		return
 	}
 
@@ -237,7 +253,7 @@ func (s *Server) restOutboundChunk(w http.ResponseWriter, r *http.Request) {
 		SessionID: chunk.SessionID,
 	}
 	ev.ID = s.chunks.Channel(channel).Append(ev)
-	s.sse.broadcast(channel, ev)
+	s.recordAndBroadcast(r.Context(), ev)
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
@@ -251,8 +267,8 @@ func (s *Server) restOutboundComplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channel := complete.Channel
-	if channel == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel is required"})
+	if channel == "" || complete.ChatID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel and chat_id are required"})
 		return
 	}
 
@@ -270,7 +286,7 @@ func (s *Server) restOutboundComplete(w http.ResponseWriter, r *http.Request) {
 		SessionID:   complete.SessionID,
 	}
 	ev.ID = s.chunks.Channel(channel).Append(ev)
-	s.sse.broadcast(channel, ev)
+	s.recordAndBroadcast(r.Context(), ev)
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
@@ -292,7 +308,7 @@ func (s *Server) broadcastOutbound(msg nanoprotocol.OutboundMessage) {
 		SessionID:   msg.SessionID,
 	}
 	ev.ID = s.chunks.Channel(msg.Channel).Append(ev)
-	s.sse.broadcast(msg.Channel, ev)
+	s.recordAndBroadcast(context.Background(), ev)
 
 	// Delivery for streaming channels is the SSE broadcast itself, so resolve
 	// the queue row to 'done' rather than leaving it pending forever.
@@ -308,6 +324,13 @@ func (s *Server) restEventsStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	// Refuse before any bytes are written: once the SSE headers and the opening
+	// comment are out, an error answer is just a 200 with a strange body.
+	chatID := r.URL.Query().Get("chat_id")
+	if chatID != "" && s.streams == nil {
+		http.Error(w, "conversation streaming is not available", http.StatusServiceUnavailable)
 		return
 	}
 
