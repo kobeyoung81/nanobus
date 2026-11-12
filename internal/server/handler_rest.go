@@ -25,6 +25,7 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 
 	// SSE streaming (gateway ← bus)
 	mux.HandleFunc("GET /api/v1/outbound/stream", s.restOutboundStream)
+	mux.HandleFunc("GET /api/v1/outbound/cursor", s.restOutboundCursor)
 	mux.HandleFunc("GET /api/v1/events/stream", s.restEventsStream)
 
 	// Hypervisor tunnels: kept for containers whose image still dials the bus.

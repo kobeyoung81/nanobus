@@ -34,6 +34,10 @@ func (f *fakeStreamStore) Append(_ context.Context, ev stream.Event) (string, er
 	return bson.NewObjectID().Hex(), nil
 }
 
+func (f *fakeStreamStore) Newest(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+
 func (f *fakeStreamStore) Since(_ context.Context, _, _, afterID string, _ int) ([]stream.Event, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

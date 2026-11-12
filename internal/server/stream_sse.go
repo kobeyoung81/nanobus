@@ -226,6 +226,29 @@ func (s *Server) restOutboundStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// restOutboundCursor answers the conversation's newest event id. A gateway that
+// is about to dispatch a message subscribes from here, so it receives the reply
+// without replaying the previous one.
+func (s *Server) restOutboundCursor(w http.ResponseWriter, r *http.Request) {
+	channel := r.URL.Query().Get("channel")
+	chatID := r.URL.Query().Get("chat_id")
+	if channel == "" || chatID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel and chat_id are required"})
+		return
+	}
+	if s.streams == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "conversation streaming is not available"})
+		return
+	}
+	id, err := s.streams.Newest(r.Context(), channel, chatID)
+	if err != nil {
+		slog.Error("stream: read cursor", "channel", channel, "chat_id", chatID, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
 // restOutboundChunk accepts a streaming chunk from an agent and broadcasts it.
 func (s *Server) restOutboundChunk(w http.ResponseWriter, r *http.Request) {
 	var chunk nanoprotocol.OutboundChunk

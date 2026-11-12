@@ -16,6 +16,7 @@ import (
 type streamEventStore interface {
 	Append(ctx context.Context, ev stream.Event) (string, error)
 	Since(ctx context.Context, channel, chatID, afterID string, limit int) ([]stream.Event, error)
+	Newest(ctx context.Context, channel, chatID string) (string, error)
 }
 
 // streamStoreFor builds the store from the server's database. A server without

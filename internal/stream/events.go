@@ -191,6 +191,26 @@ func (s *Store) oldest(ctx context.Context, channel, chatID string) (*bson.Objec
 	return &doc.ID, nil
 }
 
+// Newest returns the conversation's newest event id, or "" when it has none.
+// A fresh subscriber starts from here: replaying the previous turn's answer into
+// a client that just asked a new question is worse than missing nothing.
+func (s *Store) Newest(ctx context.Context, channel, chatID string) (string, error) {
+	var doc struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	err := s.coll.FindOne(ctx,
+		bson.D{{Key: "channel", Value: channel}, {Key: "chat_id", Value: chatID}},
+		options.FindOne().SetSort(bson.D{{Key: "_id", Value: -1}}).SetProjection(bson.D{{Key: "_id", Value: 1}}),
+	).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read newest stream event: %w", err)
+	}
+	return doc.ID.Hex(), nil
+}
+
 // Trim keeps the newest keep events of one conversation and deletes the rest.
 func (s *Store) Trim(ctx context.Context, channel, chatID string, keep int) error {
 	if keep <= 0 {
