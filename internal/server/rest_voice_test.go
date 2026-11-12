@@ -167,7 +167,6 @@ func TestRestVoiceConfig_Configured(t *testing.T) {
 		MaxSeconds int    `json:"max_seconds"`
 		Language   string `json:"language"`
 		Realtime   struct {
-			Engine       string `json:"engine"`
 			Model        string `json:"model"`
 			ProviderName string `json:"provider_name"`
 			Available    bool   `json:"available"`
@@ -194,8 +193,8 @@ func TestRestVoiceConfig_Configured(t *testing.T) {
 	if view.Realtime.Model != "gpt-4o-transcribe" || view.Realtime.ProviderName != "LiteLLM" {
 		t.Fatalf("realtime = %+v", view.Realtime)
 	}
-	if view.Realtime.Engine != voice.EngineLocal || !view.Realtime.Available {
-		t.Fatalf("the realtime tier must report itself as the local engine and available: %+v", view.Realtime)
+	if !view.Realtime.Available {
+		t.Fatalf("the realtime tier must report itself as available: %+v", view.Realtime)
 	}
 	if view.Batch.Enabled || view.Batch.Available {
 		t.Fatalf("the batch tier must read as off when it is not configured: %+v", view.Batch)

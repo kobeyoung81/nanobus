@@ -182,11 +182,10 @@ func (s *Server) restVoiceConfig(w http.ResponseWriter, r *http.Request) {
 		"max_seconds": cfg.Realtime.MaxSeconds,
 		"language":    cfg.Realtime.Language,
 		"realtime": map[string]any{
-			"engine":        cfg.Realtime.Engine,
 			"model":         cfg.Realtime.Model,
 			"provider_name": realtimeName,
 			"available":     cfg.Realtime.Available(),
-			"audio_rate":    cfg.Realtime.AudioRate,
+			"audio_rate":    voice.AudioRate,
 		},
 		"batch": map[string]any{
 			"enabled":       cfg.Batch.Enabled,
@@ -231,7 +230,7 @@ func (s *Server) restVoiceSession(w http.ResponseWriter, r *http.Request) {
 		// The session is the authority on the capture format: the browser mints it
 		// before it opens the microphone, so this is where it learns the rate the
 		// provider expects.
-		"audio_rate": cfg.Realtime.AudioRate,
+		"audio_rate": voice.AudioRate,
 	})
 }
 
@@ -504,7 +503,7 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 		Model:    cfg.Realtime.Model,
 		Language: cfg.Realtime.Language,
 		Prompt:   cfg.Realtime.Prompt,
-		Rate:     cfg.Realtime.AudioRate,
+		Rate:     voice.AudioRate,
 	})
 	if err != nil {
 		slog.Warn("voice: realtime session refused", "error", err)

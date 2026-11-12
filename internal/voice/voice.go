@@ -28,13 +28,6 @@ import (
 // Component is the service_config_items component type holding the settings.
 const Component = "voice"
 
-// Engine values for the realtime tier. The engine only decides which layer the
-// platform expects; the provider it points at is what actually serves it.
-const (
-	EngineLocal  = "local"
-	EngineRemote = "remote"
-)
-
 // Triggers for the batch tier.
 const (
 	// BatchAlways re-transcribes every take.
@@ -61,21 +54,16 @@ type Config struct {
 	Polish   PolishConfig
 }
 
-// RealtimeConfig is tier 1: the session the composer streams into.
+// RealtimeConfig is tier 1: the session the composer streams into. It is always
+// an external OpenAI-compatible realtime provider now; the platform no longer
+// runs a recogniser of its own.
 type RealtimeConfig struct {
-	// Engine is "local" (the platform's own ASR service) or "remote" (any
-	// OpenAI-compatible realtime provider).
-	Engine           string
 	ProviderID       int64
 	Model            string
 	Language         string
 	Prompt           string
 	MaxSeconds       int
 	CommitIntervalMS int
-	// AudioRate is the rate the composer captures at and declares to the
-	// provider. 24 kHz is what the OpenAI realtime contract takes; a local model
-	// that wants 16 kHz says so here instead of being resampled on the way in.
-	AudioRate int
 }
 
 // BatchConfig is tier 2: the whole-recording pass.
@@ -132,14 +120,12 @@ func LoadConfig(items []store.ConfigItem) Config {
 		Enabled:  boolValue(m, "enabled", false),
 		Shortcut: DefaultShortcut,
 		Realtime: RealtimeConfig{
-			Engine:           normalizeEngine(m["realtime.engine"]),
 			ProviderID:       int64Value(m, "realtime.providerId", 0),
 			Model:            strings.TrimSpace(m["realtime.model"]),
 			Language:         DefaultLanguage,
 			Prompt:           strings.TrimSpace(m["realtime.prompt"]),
 			MaxSeconds:       intValue(m, "realtime.maxSeconds", DefaultMaxSeconds),
 			CommitIntervalMS: intValue(m, "realtime.commitIntervalMs", 0),
-			AudioRate:        intValue(m, "realtime.audioRate", AudioRate),
 		},
 		Batch: BatchConfig{
 			Enabled:    boolValue(m, "batch.enabled", false),
@@ -176,7 +162,6 @@ func LoadConfig(items []store.ConfigItem) Config {
 
 	cfg.Realtime.MaxSeconds = clamp(cfg.Realtime.MaxSeconds, MinMaxSeconds, MaxMaxSeconds)
 	cfg.Realtime.CommitIntervalMS = clamp(cfg.Realtime.CommitIntervalMS, 0, MaxCommitIntervalMS)
-	cfg.Realtime.AudioRate = clamp(cfg.Realtime.AudioRate, MinAudioRate, MaxAudioRate)
 	return cfg
 }
 
@@ -217,17 +202,8 @@ type Provider struct {
 }
 
 // AudioRate is the sample rate the realtime API accepts. Anything else is
-// rejected upstream, so the browser captures (or resamples to) exactly this. It
-// is also the default for the realtime.audioRate config item: a local engine that
-// wants 16 kHz sets that key rather than being resampled on the way in.
+// rejected upstream, so the browser captures (or resamples to) exactly this.
 const AudioRate = 24000
-
-// Bounds for the configured rate: below the first no speech model works, and
-// above the second no browser captures.
-const (
-	MinAudioRate = 8000
-	MaxAudioRate = 48000
-)
 
 // RealtimeURL builds the provider's realtime WebSocket URL for a transcription
 // session: the base URL's scheme is switched to ws/wss and
@@ -305,17 +281,6 @@ func normalizeThinking(v string) string {
 		}
 	}
 	return EffortNone
-}
-
-// normalizeEngine validates the realtime engine. An unrecognized value falls
-// back to the platform default rather than leaving the tier undefined.
-func normalizeEngine(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case EngineRemote:
-		return EngineRemote
-	default:
-		return EngineLocal
-	}
 }
 
 // normalizeTrigger validates the batch trigger. "always" is the platform

@@ -23,19 +23,11 @@ func TestLoadConfigDefaultsToThreeIdleTiers(t *testing.T) {
 	if cfg.Shortcut != DefaultShortcut {
 		t.Errorf("Shortcut = %q, want the platform default %q", cfg.Shortcut, DefaultShortcut)
 	}
-	if cfg.Realtime.Engine != EngineLocal {
-		t.Errorf("Realtime.Engine = %q, want %q", cfg.Realtime.Engine, EngineLocal)
-	}
 	if cfg.Realtime.MaxSeconds != DefaultMaxSeconds || cfg.Realtime.Language != DefaultLanguage {
 		t.Errorf("realtime defaults: %+v", cfg.Realtime)
 	}
 	if cfg.Realtime.CommitIntervalMS != 0 {
 		t.Errorf("CommitIntervalMS = %d, want 0 (commit when the user stops)", cfg.Realtime.CommitIntervalMS)
-	}
-	// 24 kHz is the OpenAI realtime contract: a platform that says nothing keeps
-	// working with an external provider.
-	if cfg.Realtime.AudioRate != AudioRate {
-		t.Errorf("AudioRate = %d, want %d", cfg.Realtime.AudioRate, AudioRate)
 	}
 	if cfg.Batch.Enabled || cfg.Batch.Trigger != BatchAlways {
 		t.Errorf("batch defaults: %+v", cfg.Batch)
@@ -70,14 +62,12 @@ func TestLoadConfigReadsEveryTier(t *testing.T) {
 	cfg := LoadConfig(items(map[string]string{
 		"enabled":                   "true",
 		"shortcut":                  " ctrl+shift+m ",
-		"realtime.engine":           "remote",
 		"realtime.providerId":       "7",
 		"realtime.model":            " gpt-4o-transcribe ",
 		"realtime.language":         "",
 		"realtime.prompt":           "术语：myriadmind",
 		"realtime.maxSeconds":       "300",
 		"realtime.commitIntervalMs": "500",
-		"realtime.audioRate":        "16000",
 		"batch.enabled":             "true",
 		"batch.trigger":             "manual",
 		"batch.providerId":          "9",
@@ -97,7 +87,7 @@ func TestLoadConfigReadsEveryTier(t *testing.T) {
 	if cfg.Shortcut != "ctrl+shift+m" {
 		t.Errorf("Shortcut = %q, want the stored value with the padding trimmed", cfg.Shortcut)
 	}
-	if cfg.Realtime.Engine != EngineRemote || cfg.Realtime.ProviderID != 7 || cfg.Realtime.Model != "gpt-4o-transcribe" {
+	if cfg.Realtime.ProviderID != 7 || cfg.Realtime.Model != "gpt-4o-transcribe" {
 		t.Errorf("realtime: %+v", cfg.Realtime)
 	}
 	if cfg.Realtime.Language != "" {
@@ -105,10 +95,6 @@ func TestLoadConfigReadsEveryTier(t *testing.T) {
 	}
 	if cfg.Realtime.MaxSeconds != 300 || cfg.Realtime.CommitIntervalMS != 500 {
 		t.Errorf("realtime bounds: %+v", cfg.Realtime)
-	}
-	// A local 16 kHz model asks for its own rate instead of being resampled.
-	if cfg.Realtime.AudioRate != 16000 {
-		t.Errorf("AudioRate = %d, want the configured 16000", cfg.Realtime.AudioRate)
 	}
 	if !cfg.Batch.Enabled || cfg.Batch.Trigger != BatchManual || cfg.Batch.ProviderID != 9 || cfg.Batch.Model != "whisper-1" {
 		t.Errorf("batch: %+v", cfg.Batch)
@@ -133,16 +119,12 @@ func TestLoadConfigClampsBounds(t *testing.T) {
 		"realtime.model":            "m",
 		"realtime.maxSeconds":       "99999",
 		"realtime.commitIntervalMs": "99999",
-		"realtime.audioRate":        "99999",
 	}))
 	if cfg.Realtime.MaxSeconds != MaxMaxSeconds {
 		t.Errorf("MaxSeconds = %d, want clamp to %d", cfg.Realtime.MaxSeconds, MaxMaxSeconds)
 	}
 	if cfg.Realtime.CommitIntervalMS != MaxCommitIntervalMS {
 		t.Errorf("CommitIntervalMS = %d, want clamp to %d", cfg.Realtime.CommitIntervalMS, MaxCommitIntervalMS)
-	}
-	if cfg.Realtime.AudioRate != MaxAudioRate {
-		t.Errorf("AudioRate = %d, want clamp to %d", cfg.Realtime.AudioRate, MaxAudioRate)
 	}
 
 	cfg = LoadConfig(items(map[string]string{
@@ -158,16 +140,11 @@ func TestLoadConfigClampsBounds(t *testing.T) {
 }
 
 // TestUnrecognizedEnumsFallBackToThePlatformDefault keeps a mistyped value from
-// disabling a tier silently: an unknown engine reads as the local one, and an
-// unknown trigger re-transcribes (the behaviour the platform promises).
+// silently skipping a tier: an unknown batch trigger re-transcribes.
 func TestUnrecognizedEnumsFallBackToThePlatformDefault(t *testing.T) {
 	cfg := LoadConfig(items(map[string]string{
-		"realtime.engine": "LOCAL ",
-		"batch.trigger":   "sometimes",
+		"batch.trigger": "sometimes",
 	}))
-	if cfg.Realtime.Engine != EngineLocal {
-		t.Errorf("Engine = %q, want %q", cfg.Realtime.Engine, EngineLocal)
-	}
 	if cfg.Batch.Trigger != BatchAlways {
 		t.Errorf("Trigger = %q, want %q", cfg.Batch.Trigger, BatchAlways)
 	}
