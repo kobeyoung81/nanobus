@@ -2,14 +2,16 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanoprotocol"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -216,6 +218,49 @@ func (s *Server) tunnelKeepalive(conn *websocket.Conn, done <-chan struct{}) {
 	}
 }
 
+// errTunnelNotRegistered lets the HTTP relay answer 404 ("the container is not
+// connected here") instead of flattening every failure into 502.
+var errTunnelNotRegistered = errors.New("hypervisor tunnel not registered")
+
+// restForwardTunnelRequest relays one HTTP request through a tunnel. The
+// workspace module calls it only for containers that still dial the bus; a
+// request for a container that connected to the provisioner is itself relayed by
+// forwardTunnelRequest, so the caller does not need to know where it landed.
+func (s *Server) restForwardTunnelRequest(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tunnel name is required"})
+		return
+	}
+	var req nanoprotocol.TunnelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Method == "" || req.Path == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "method and path are required"})
+		return
+	}
+	if req.RequestID == "" {
+		req.RequestID = uuid.NewString()
+	}
+	resp, err := s.forwardTunnelRequest(name, req, fileTunnelTimeout)
+	if err != nil {
+		var status *provisionerclient.StatusError
+		switch {
+		case errors.As(err, &status) && status.Code == http.StatusNotFound:
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is not registered"})
+		case errors.Is(err, errTunnelNotRegistered):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is not registered"})
+		default:
+			slog.Warn("relay tunnel request failed", "tunnel", name, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "tunnel forward failed"})
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // forwardTunnelRequest sends a tunnel_request to the named hypervisor tunnel
 // and blocks for the matching tunnel_response.
 func (s *Server) forwardTunnelRequest(name string, req nanoprotocol.TunnelRequest, timeout time.Duration) (*nanoprotocol.TunnelResponse, error) {
@@ -228,7 +273,7 @@ func (s *Server) forwardTunnelRequest(name string, req nanoprotocol.TunnelReques
 		if s.provisioner != nil && s.provisioner.Enabled() {
 			return s.provisioner.ForwardTunnel(context.Background(), name, req)
 		}
-		return nil, fmt.Errorf("hypervisor tunnel not registered for %s", name)
+		return nil, fmt.Errorf("%w for %s", errTunnelNotRegistered, name)
 	}
 
 	ch := hc.addPending(req.RequestID)
@@ -253,101 +298,17 @@ func (s *Server) forwardTunnelRequest(name string, req nanoprotocol.TunnelReques
 	}
 }
 
-// restFileList resolves an agent to its owner and proxies a files listing
-// to that owner's hypervisor through the bus tunnel.
-func (s *Server) restFileList(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	path := "/api/v1/files/" + agentID
-	if q := r.URL.Query().Get("path"); q != "" {
-		path += "?path=" + url.QueryEscape(q)
-	}
-	s.forwardHypervisorRequest(w, r, agentID, http.MethodGet, path, nil)
-}
-
 // restFileContentGET tunnels a file read (download) to the owning
 // hypervisor.
-func (s *Server) restFileContentGET(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	path := "/api/v1/files/" + agentID + "/content"
-	if q := r.URL.Query().Get("path"); q != "" {
-		path += "?path=" + url.QueryEscape(q)
-	}
-	s.forwardHypervisorRequest(w, r, agentID, http.MethodGet, path, nil)
-}
-
 // restFileContentPUT tunnels a file write (upload) to the owning
 // hypervisor, forwarding the raw request body.
-func (s *Server) restFileContentPUT(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	path := "/api/v1/files/" + agentID + "/content"
-	if q := r.URL.Query().Get("path"); q != "" {
-		path += "?path=" + url.QueryEscape(q)
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read request body"})
-		return
-	}
-	s.forwardHypervisorRequest(w, r, agentID, http.MethodPut, path, body)
-}
-
 // restFileContentDELETE tunnels a file delete to the owning
 // hypervisor.
-func (s *Server) restFileContentDELETE(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	path := "/api/v1/files/" + agentID + "/content"
-	if q := r.URL.Query().Get("path"); q != "" {
-		path += "?path=" + url.QueryEscape(q)
-	}
-	s.forwardHypervisorRequest(w, r, agentID, http.MethodDelete, path, nil)
-}
-
 // restFileMkdir tunnels a directory creation to the owning
 // hypervisor.
-func (s *Server) restFileMkdir(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	path := "/api/v1/files/" + agentID + "/mkdir"
-	if q := r.URL.Query().Get("path"); q != "" {
-		path += "?path=" + url.QueryEscape(q)
-	}
-	s.forwardHypervisorRequest(w, r, agentID, http.MethodPost, path, nil)
-}
-
 // restFileRename tunnels a file rename to the owning
 // hypervisor.
-func (s *Server) restFileRename(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	path := "/api/v1/files/" + agentID + "/rename"
-	query := url.Values{}
-	if p := r.URL.Query().Get("path"); p != "" {
-		query.Set("path", p)
-	}
-	if to := r.URL.Query().Get("to"); to != "" {
-		query.Set("to", to)
-	}
-	if encoded := query.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	s.forwardHypervisorRequest(w, r, agentID, http.MethodPost, path, nil)
-}
-
 // restFileCopy tunnels a file copy to the owning hypervisor.
-func (s *Server) restFileCopy(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	path := "/api/v1/files/" + agentID + "/copy"
-	query := url.Values{}
-	if p := r.URL.Query().Get("path"); p != "" {
-		query.Set("path", p)
-	}
-	if to := r.URL.Query().Get("to"); to != "" {
-		query.Set("to", to)
-	}
-	if encoded := query.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	s.forwardHypervisorRequest(w, r, agentID, http.MethodPost, path, nil)
-}
-
 // restTerminalList tunnels a live-terminal listing to the owning hypervisor.
 func (s *Server) restTerminalList(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agentID")
@@ -371,31 +332,6 @@ func (s *Server) restTerminalKill(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agentID")
 	terminalID := r.PathValue("terminalID")
 	s.forwardHypervisorRequest(w, r, agentID, http.MethodDelete, "/api/v1/terminals/"+agentID+"/"+terminalID, nil)
-}
-
-// restGit tunnels any git-browser request (browse + git operations) to the
-// owning hypervisor. The full path and query are forwarded verbatim so the
-// hypervisor's git API receives the original operation and parameters.
-func (s *Server) restGit(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("agentID")
-	op := r.PathValue("op")
-	if agentID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_id is required"})
-		return
-	}
-	path := "/api/v1/git/" + agentID
-	if op != "" {
-		path += "/" + op
-	}
-	if q := r.URL.RawQuery; q != "" {
-		path += "?" + q
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read request body"})
-		return
-	}
-	s.forwardHypervisorRequest(w, r, agentID, r.Method, path, body)
 }
 
 // forwardHypervisorRequest resolves an agent to its owner and tunnels an HTTP

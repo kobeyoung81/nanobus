@@ -30,25 +30,13 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// Hypervisor tunnels: kept for containers whose image still dials the bus.
 	// Tunnels terminate at the provisioner now (see internal/server/hypervisor_tunnel.go).
 	mux.HandleFunc("GET /ws/hypervisor", s.handleHypervisorTunnelWS)
+	// The relay surface the workspace module uses for those older containers.
+	mux.HandleFunc("POST /api/v1/internal/tunnels/{name}/request", s.restForwardTunnelRequest)
 
-	// Agent files browser + exchange (proxied to the owning user's hypervisor tunnel)
-	mux.HandleFunc("GET /api/v1/files/{agentID}", s.restFileList)
-	mux.HandleFunc("GET /api/v1/files/{agentID}/content", s.restFileContentGET)
-	mux.HandleFunc("PUT /api/v1/files/{agentID}/content", s.restFileContentPUT)
-	mux.HandleFunc("DELETE /api/v1/files/{agentID}/content", s.restFileContentDELETE)
-	mux.HandleFunc("POST /api/v1/files/{agentID}/mkdir", s.restFileMkdir)
-	mux.HandleFunc("POST /api/v1/files/{agentID}/rename", s.restFileRename)
-	mux.HandleFunc("POST /api/v1/files/{agentID}/copy", s.restFileCopy)
 	mux.HandleFunc("GET /api/v1/agents/{agentID}/terminals", s.restTerminalList)
 	mux.HandleFunc("POST /api/v1/agents/{agentID}/terminals/attach", s.restTerminalAttach)
 	mux.HandleFunc("DELETE /api/v1/agents/{agentID}/terminals/{terminalID}", s.restTerminalKill)
 	mux.HandleFunc("GET /ws/terminal", s.handleTerminalBridgeWS)
-
-	// Git browser (proxied to the owning user's hypervisor tunnel).
-	mux.HandleFunc("GET /api/v1/git/{agentID}/{op...}", s.restGit)
-	mux.HandleFunc("POST /api/v1/git/{agentID}/{op...}", s.restGit)
-	mux.HandleFunc("PUT /api/v1/git/{agentID}/{op...}", s.restGit)
-	mux.HandleFunc("DELETE /api/v1/git/{agentID}/{op...}", s.restGit)
 
 	// Users
 	mux.HandleFunc("POST /api/v1/users/resolve", s.restResolveUser)

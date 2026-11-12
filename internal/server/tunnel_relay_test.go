@@ -17,6 +17,7 @@ import (
 
 	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanoprotocol"
+	"github.com/gorilla/websocket"
 )
 
 func TestForwardTunnelRequest_RelaysToTheProvisioner(t *testing.T) {
@@ -139,5 +140,78 @@ func TestNamedTunnelsAreGone(t *testing.T) {
 	}
 	if strings.Contains(string(source), "/ws/tunnel/{name}") || strings.Contains(string(source), "restRegisterTunnel") {
 		t.Fatal("the named-tunnel routes are back in handler_rest.go")
+	}
+}
+
+// TestRelayEndpoint_MapsTheTwoFailures pins the HTTP surface the workspace
+// module calls: 404 means "not connected here" (it then asks the next hop), 502
+// means the tunnel exists but the forward failed. A flattened answer would make
+// the caller retry a dead container forever or give up on a live one.
+func TestRelayEndpoint_MapsTheTwoFailures(t *testing.T) {
+	s := &Server{hypervisorTunnels: newHypervisorTunnelRegistry()}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/internal/tunnels/{name}/request", s.restForwardTunnelRequest)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	body := `{"method":"GET","path":"/api/v1/files/agent-1"}`
+	post := func(name string) *http.Response {
+		resp, err := http.Post(srv.URL+"/api/v1/internal/tunnels/"+name+"/request", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+
+	if got := post("hypervisor-nobody").StatusCode; got != http.StatusNotFound {
+		t.Fatalf("unknown tunnel: status = %d, want 404", got)
+	}
+
+	// A registered tunnel whose write fails is a 502, not "offline". The fake
+	// container accepts the handshake and disappears, so the write errors the
+	// way a half-dead connection does.
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	gone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			_ = c.Close()
+		}
+	}))
+	defer gone.Close()
+	wsURL := "ws" + strings.TrimPrefix(gone.URL, "http")
+	dead, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial the fake container: %v", err)
+	}
+	_ = dead.Close()
+	conn := &hypervisorConn{conn: dead, pending: map[string]chan *nanoprotocol.TunnelResponse{}}
+	s.hypervisorTunnels.register("hypervisor-user-1", conn)
+	if got := post("hypervisor-user-1").StatusCode; got != http.StatusBadGateway {
+		t.Fatalf("broken tunnel: status = %d, want 502", got)
+	}
+}
+
+// TestFileAndGitRoutesAreGone: the workspace module serves them now, through the
+// tunnel; a route here would be a second implementation of the same URL and a
+// way for older callers to bypass the workspace's ownership check.
+func TestFileAndGitRoutesAreGone(t *testing.T) {
+	s := NewServer(nil)
+	mux := http.NewServeMux()
+	s.registerRESTRoutes(mux)
+
+	cases := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/files/agent-1"},
+		{http.MethodGet, "/api/v1/files/agent-1/content"},
+		{http.MethodPut, "/api/v1/files/agent-1/content"},
+		{http.MethodPost, "/api/v1/files/agent-1/mkdir"},
+		{http.MethodGet, "/api/v1/git/agent-1/status"},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`)))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s = %d, want 404", tc.method, tc.path, rec.Code)
+		}
 	}
 }
