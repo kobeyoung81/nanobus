@@ -27,11 +27,9 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/outbound/stream", s.restOutboundStream)
 	mux.HandleFunc("GET /api/v1/events/stream", s.restEventsStream)
 
-	// WebSocket tunnels (hypervisor / container shell access)
-	mux.HandleFunc("GET /ws/tunnel/{name}", s.handleTunnelWS)
+	// Hypervisor tunnels: kept for containers whose image still dials the bus.
+	// Tunnels terminate at the provisioner now (see internal/server/hypervisor_tunnel.go).
 	mux.HandleFunc("GET /ws/hypervisor", s.handleHypervisorTunnelWS)
-	mux.HandleFunc("POST /api/v1/tunnels", s.restRegisterTunnel)
-	mux.HandleFunc("DELETE /api/v1/tunnels/{name}", s.restUnregisterTunnel)
 
 	// Agent files browser + exchange (proxied to the owning user's hypervisor tunnel)
 	mux.HandleFunc("GET /api/v1/files/{agentID}", s.restFileList)
@@ -324,31 +322,6 @@ func (s *Server) restDisposeContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "disposing"})
-}
-
-func (s *Server) restRegisterTunnel(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name        string `json:"name"`
-		UpstreamURL string `json:"upstream_url"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if req.Name == "" || req.UpstreamURL == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and upstream_url are required"})
-		return
-	}
-
-	s.tunnels.Register(req.Name, req.UpstreamURL)
-	slog.Info("tunnel registered", "name", req.Name, "upstream", req.UpstreamURL)
-	writeJSON(w, http.StatusOK, map[string]string{"name": req.Name, "status": "registered"})
-}
-
-func (s *Server) restUnregisterTunnel(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	s.tunnels.Unregister(name)
-	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "unregistered"})
 }
 
 // nonNilSlice keeps a list field on the wire an array. A nil slice means "no

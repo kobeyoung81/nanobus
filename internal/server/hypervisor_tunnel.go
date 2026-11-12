@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -220,6 +221,13 @@ func (s *Server) tunnelKeepalive(conn *websocket.Conn, done <-chan struct{}) {
 func (s *Server) forwardTunnelRequest(name string, req nanoprotocol.TunnelRequest, timeout time.Duration) (*nanoprotocol.TunnelResponse, error) {
 	hc, ok := s.hypervisorTunnels.lookup(name)
 	if !ok {
+		// Tunnels terminate at the provisioner now. Containers that still dial
+		// the bus (every container until it is restarted onto the new image) are
+		// served from the local registry above; the rest are relayed. This whole
+		// path is the dual-track window and goes away with it.
+		if s.provisioner != nil && s.provisioner.Enabled() {
+			return s.provisioner.ForwardTunnel(context.Background(), name, req)
+		}
 		return nil, fmt.Errorf("hypervisor tunnel not registered for %s", name)
 	}
 

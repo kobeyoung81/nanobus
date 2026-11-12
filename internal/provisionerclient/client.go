@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
 // Client calls the provisioner's internal API.
@@ -23,15 +25,19 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	// tunnelHTTP is slower than http: a forwarded request waits for the
+	// container's bridge, which itself allows 60s for a workspace file.
+	tunnelHTTP *http.Client
 }
 
 // New returns a client. An empty base URL leaves it disabled and every call then
 // fails loudly.
 func New(baseURL, token string) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		token:      token,
+		http:       &http.Client{Timeout: 15 * time.Second},
+		tunnelHTTP: &http.Client{Timeout: 90 * time.Second},
 	}
 }
 
@@ -111,6 +117,42 @@ func (c *Client) do(ctx context.Context, method, path string, body any) error {
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
+}
+
+// ForwardTunnel puts one HTTP request on the container's tunnel. Tunnels
+// terminate at the provisioner now, so a request for a container that connected
+// there has to be relayed; a 404 means no tunnel with that name is registered.
+func (c *Client) ForwardTunnel(ctx context.Context, name string, req nanoprotocol.TunnelRequest) (*nanoprotocol.TunnelResponse, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("the provisioner module is not configured")
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := c.baseURL + "/api/v1/internal/tunnels/" + url.PathEscape(name) + "/request"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.tunnelHTTP.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("forward tunnel request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, &StatusError{Code: resp.StatusCode, Body: strings.TrimSpace(string(detail))}
+	}
+	var out nanoprotocol.TunnelResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode tunnel response: %w", err)
+	}
+	return &out, nil
 }
 
 // StatusError carries the answer's status so the caller can pass 404/409 through

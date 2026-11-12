@@ -36,7 +36,6 @@ type Server struct {
 	chunks            *stream.ChunkBuffer
 	sse               *sseHub
 	events            *sseHub
-	tunnels           *TunnelRegistry
 	hypervisorTunnels *hypervisorTunnelRegistry
 	terminalSubs      *terminalSubRegistry
 	voiceSessions     *voiceSessionRegistry
@@ -170,7 +169,6 @@ func NewServer(s *store.Store, opts ...ServerOption) *Server {
 		chunks:            stream.NewChunkBuffer(1000),
 		sse:               newSSEHub(),
 		events:            newSSEHub(),
-		tunnels:           NewTunnelRegistry(),
 		hypervisorTunnels: newHypervisorTunnelRegistry(),
 		terminalSubs:      newTerminalSubRegistry(),
 		voiceSessions:     newVoiceSessionRegistry(voiceSessionTTL),
