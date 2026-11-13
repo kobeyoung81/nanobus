@@ -137,3 +137,38 @@ func TestBusDoesNotCreateAccounts(t *testing.T) {
 		}
 	}
 }
+
+// TestBusDoesNotDriveTheContainerLifecycle: restart, dispose and reprovision are
+// the admin module's control plane now. The bus keeps the paths the platform
+// itself uses (an agent's container request, the runner registry) and nothing
+// else, so a page that still points at the old path fails loudly here instead of
+// half-working.
+func TestBusDoesNotDriveTheContainerLifecycle(t *testing.T) {
+	s := NewServer(nil)
+	mux := http.NewServeMux()
+	s.registerRESTRoutes(mux)
+
+	for _, action := range []string{"restart", "dispose", "reprovision"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/containers/u-1/"+action, nil))
+		// The route table alone answers 404; the full handler's WebSocket
+		// catch-all turns "no such path" into 400.
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST /api/v1/containers/u-1/%s = %d, want 404 (no such route): the admin module owns it",
+				action, rec.Code)
+		}
+	}
+
+	source, err := os.ReadFile("handler_rest.go")
+	if err != nil {
+		t.Fatalf("read the route table: %v", err)
+	}
+	if strings.Contains(string(source), "/containers/{id}/restart") {
+		t.Error("handler_rest.go registers the container lifecycle again: admin serves it")
+	}
+	for _, want := range []string{`"POST /api/v1/containers"`, `"GET /api/v1/containers"`} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("handler_rest.go is missing %s: the platform still queues and reads containers here", want)
+		}
+	}
+}

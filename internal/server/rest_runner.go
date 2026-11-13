@@ -17,40 +17,6 @@ import (
 // shape configuration has (bus → admin). What is left here are the reads the
 // console needs and the runner registry.
 
-func (s *Server) restRestartContainer(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "container id is required"})
-		return
-	}
-
-	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
-		return c.Restart(ctx, id)
-	}); err != nil {
-		s.writeProvisionerError(w, err, "restart container", id)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
-}
-
-// restReprovisionContainer revives a user's disposed/failed container request
-// so the runner provisions a fresh container without requiring user traffic.
-func (s *Server) restReprovisionContainer(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "container id is required"})
-		return
-	}
-
-	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
-		return c.Reprovision(ctx, id)
-	}); err != nil {
-		s.writeProvisionerError(w, err, "reprovision container", id)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
-}
-
 func (s *Server) restRegisterRunner(w http.ResponseWriter, r *http.Request) {
 	var req nanoprotocol.RegisterRunnerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -1,9 +1,10 @@
-// Package provisionerclient forwards the container actions the console sends to
-// this service.
+// Package provisionerclient talks to the provisioning module.
 //
-// The provisioning queue belongs to the runner now: it polls it and records what
-// happened. The console still speaks to the bus, which keeps that door and asks
-// the queue's owner — the same shape configuration has (bus → admin).
+// The provisioning queue belongs to the runner: it polls it and records what
+// happened. The bus still asks the owner for the two things that are its own —
+// an agent's container request, and the runner registry — while the console's
+// container lifecycle actions moved to the admin module (which has its own
+// client for them).
 package provisionerclient
 
 import (
@@ -54,19 +55,6 @@ func (c *Client) EnqueueForAgent(ctx context.Context, userID, agentID string) er
 func (c *Client) Enqueue(ctx context.Context, userID string, bindingID int64, agentID, level string) error {
 	body := map[string]any{"user_id": userID, "binding_id": bindingID, "agent_id": agentID, "level": level}
 	return c.post(ctx, "/api/v1/internal/containers", body)
-}
-
-// Dispose, Restart and Reprovision move one user's request to the matching state.
-func (c *Client) Dispose(ctx context.Context, userID string) error {
-	return c.post(ctx, "/api/v1/internal/containers/"+url.PathEscape(userID)+"/dispose", map[string]any{})
-}
-
-func (c *Client) Restart(ctx context.Context, userID string) error {
-	return c.post(ctx, "/api/v1/internal/containers/"+url.PathEscape(userID)+"/restart", map[string]any{})
-}
-
-func (c *Client) Reprovision(ctx context.Context, userID string) error {
-	return c.post(ctx, "/api/v1/internal/containers/"+url.PathEscape(userID)+"/reprovision", map[string]any{})
 }
 
 // RegisterRunner asks the registry's owner to record (or refresh) a runner. The

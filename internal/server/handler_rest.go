@@ -83,9 +83,6 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/containers", s.restListContainers)
 	// The queue's poll and status paths are the runner's own: it polls its store
 	// directly now, so nothing needs them here.
-	mux.HandleFunc("POST /api/v1/containers/{id}/dispose", s.restDisposeContainer)
-	mux.HandleFunc("POST /api/v1/containers/{id}/restart", s.restRestartContainer)
-	mux.HandleFunc("POST /api/v1/containers/{id}/reprovision", s.restReprovisionContainer)
 	mux.HandleFunc("POST /api/v1/runners/register", s.restRegisterRunner)
 	// The fleet view and the runtime snapshot, for the portal.
 	// Internal: the admin module owns the type catalogue and asks this service
@@ -298,22 +295,6 @@ func (s *Server) restListContainers(w http.ResponseWriter, r *http.Request) {
 	}
 	requests = nonNilSlice(requests)
 	writeJSON(w, http.StatusOK, map[string]any{"requests": requests})
-}
-
-func (s *Server) restDisposeContainer(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "container id is required"})
-		return
-	}
-
-	if err := s.callProvisioner(r, func(ctx context.Context, c *provisionerclient.Client) error {
-		return c.Dispose(ctx, id)
-	}); err != nil {
-		s.writeProvisionerError(w, err, "dispose container", id)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "disposing"})
 }
 
 // nonNilSlice keeps a list field on the wire an array. A nil slice means "no
