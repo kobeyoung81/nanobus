@@ -1,0 +1,13 @@
+{
+  "collections": {
+    "bus_voice_sessions": {
+      "indexes": [
+        {
+          "name": "expiry",
+          "keys": [["expires_at", 1]],
+          "expireAfterSeconds": 0
+        }
+      ]
+    }
+  }
+}

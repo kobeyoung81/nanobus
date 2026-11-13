@@ -36,7 +36,12 @@ type Server struct {
 	chunks      *stream.ChunkBuffer
 	// streams is the durable, per-conversation event log. The in-memory ring
 	// above stays for gateways that still subscribe per channel.
-	streams           streamEventStore
+	streams streamEventStore
+	// platform is the durable change-notification log (config, capabilities,
+	// agents); voiceStore holds the one-time voice ids. Both let a second
+	// replica serve what the first one published.
+	platform          platformEventStore
+	voiceStore        voiceSessionStore
 	sse               *sseHub
 	events            *sseHub
 	hypervisorTunnels *hypervisorTunnelRegistry
@@ -171,6 +176,8 @@ func NewServer(s *store.Store, opts ...ServerOption) *Server {
 		},
 		chunks:            stream.NewChunkBuffer(1000),
 		streams:           streamStoreFor(s),
+		platform:          platformStoreFor(s),
+		voiceStore:        voiceStoreFor(s),
 		sse:               newSSEHub(),
 		events:            newSSEHub(),
 		hypervisorTunnels: newHypervisorTunnelRegistry(),

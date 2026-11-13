@@ -1,0 +1,13 @@
+{
+  "collections": {
+    "bus_platform_events": {
+      "indexes": [
+        {
+          "name": "expiry",
+          "keys": [["at", 1]],
+          "expireAfterSeconds": 600
+        }
+      ]
+    }
+  }
+}

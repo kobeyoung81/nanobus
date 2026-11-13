@@ -13,6 +13,7 @@ import (
 
 	"gitee.com/kobeyoung81/nanobus/internal/stream"
 	"gitee.com/kobeyoung81/nanoprotocol"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 // sseSubscriber receives broadcast events for a subject.
@@ -342,45 +343,83 @@ func (s *Server) broadcastOutbound(msg nanoprotocol.OutboundMessage) {
 	}
 }
 
-// restEventsStream opens an SSE stream of bus events (currently config_changed).
+// restEventsStream opens the platform change stream (config, capabilities,
+// agents, models). It reads the durable log so a subscriber on any replica sees
+// every change; the in-memory hub is only the wake-up.
 func (s *Server) restEventsStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	// Refuse before any bytes are written: once the SSE headers and the opening
-	// comment are out, an error answer is just a 200 with a strange body.
-	chatID := r.URL.Query().Get("chat_id")
-	if chatID != "" && s.streams == nil {
-		http.Error(w, "conversation streaming is not available", http.StatusServiceUnavailable)
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-
-	// Send an initial comment so the client receives headers immediately.
 	if _, err := w.Write([]byte(": connected\n\n")); err != nil {
 		return
 	}
 	flusher.Flush()
 
 	sw := &sseWriter{w: w, f: flusher}
+	go keepSSEAlive(r.Context(), sw)
+
+	// Without a database (tests, degraded start) only the local hub exists.
+	if s.platform == nil {
+		sub := s.events.subscribe("events")
+		defer s.events.unsubscribe("events", sub)
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case ev := <-sub.ch:
+				if err := sw.event(ev.Type, "", ev); err != nil {
+					return
+				}
+			}
+		}
+	}
+
+	lastID := r.Header.Get("Last-Event-ID")
+	if lastID != "" {
+		if _, err := bson.ObjectIDFromHex(lastID); err != nil {
+			lastID = ""
+		}
+	}
+	// A fresh subscriber starts at the current end: replaying ten minutes of
+	// notifications into every agent start would only trigger re-reads it is
+	// already doing.
+	if lastID == "" {
+		if newest, err := s.platform.Newest(r.Context()); err == nil {
+			lastID = newest
+		}
+	}
+
 	sub := s.events.subscribe("events")
 	defer s.events.unsubscribe("events", sub)
 
-	go keepSSEAlive(r.Context(), sw)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
 
 	for {
+		events, err := s.platform.Since(r.Context(), lastID, 500)
+		if err != nil {
+			slog.Warn("platform events: read failed", "error", err)
+		}
+		for _, ev := range events {
+			out := stream.ChunkEvent{Type: ev.Type, Content: ev.Content}
+			if err := sw.event(out.Type, ev.ID.Hex(), out); err != nil {
+				return
+			}
+			lastID = ev.ID.Hex()
+		}
+		if len(events) > 0 {
+			continue
+		}
 		select {
 		case <-r.Context().Done():
 			return
-		case ev := <-sub.ch:
-			if err := sw.event(ev.Type, ev.ID, ev); err != nil {
-				return
-			}
+		case <-sub.ch:
+		case <-ticker.C:
 		}
 	}
 }
@@ -404,11 +443,7 @@ func (s *Server) emitConfigChanged(key string) {
 		AgentID: agentID,
 		Keys:    keys,
 	}
-	ev := stream.ChunkEvent{
-		Type:    nanoprotocol.TypeConfigChanged,
-		Content: marshalOrEmpty(notification),
-	}
-	s.events.broadcast("events", ev)
+	s.recordPlatformEvent(nanoprotocol.TypeConfigChanged, marshalOrEmpty(notification))
 }
 
 // emitCapabilitiesChanged broadcasts a notification so every connected agent
@@ -422,11 +457,7 @@ func (s *Server) emitCapabilitiesChanged(kind ...string) {
 		AgentID: "",
 		Keys:    keys,
 	}
-	ev := stream.ChunkEvent{
-		Type:    nanoprotocol.TypeConfigChanged,
-		Content: marshalOrEmpty(notification),
-	}
-	s.events.broadcast("events", ev)
+	s.recordPlatformEvent(nanoprotocol.TypeConfigChanged, marshalOrEmpty(notification))
 }
 
 // emitAgentsChanged broadcasts an agents_changed notification for a user so
@@ -438,11 +469,7 @@ func (s *Server) emitAgentsChanged(userID, action, agentID string) {
 		Action:  action,
 		AgentID: agentID,
 	}
-	ev := stream.ChunkEvent{
-		Type:    nanoprotocol.TypeAgentsChanged,
-		Content: marshalOrEmpty(notification),
-	}
-	s.events.broadcast("events", ev)
+	s.recordPlatformEvent(nanoprotocol.TypeAgentsChanged, marshalOrEmpty(notification))
 }
 
 // emitModelsChanged broadcasts a models catalog change. It rides the same
@@ -457,11 +484,7 @@ func (s *Server) emitModelsChanged(ownerUserID string) {
 		AgentID: agentID,
 		Keys:    []string{"models"},
 	}
-	ev := stream.ChunkEvent{
-		Type:    nanoprotocol.TypeConfigChanged,
-		Content: marshalOrEmpty(notification),
-	}
-	s.events.broadcast("events", ev)
+	s.recordPlatformEvent(nanoprotocol.TypeConfigChanged, marshalOrEmpty(notification))
 }
 
 // emitAgentSettingsChanged tells a specific running agent to re-pull its
@@ -476,11 +499,7 @@ func (s *Server) emitAgentSettingsChanged(agentID string) {
 		AgentID: agentID,
 		Keys:    []string{"capabilities.agent_settings"},
 	}
-	ev := stream.ChunkEvent{
-		Type:    nanoprotocol.TypeConfigChanged,
-		Content: marshalOrEmpty(notification),
-	}
-	s.events.broadcast("events", ev)
+	s.recordPlatformEvent(nanoprotocol.TypeConfigChanged, marshalOrEmpty(notification))
 }
 
 func marshalOrEmpty(v any) string {

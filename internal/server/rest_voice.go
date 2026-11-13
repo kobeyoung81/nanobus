@@ -216,7 +216,7 @@ func (s *Server) restVoiceSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := s.voiceSessions.Mint(userID)
+	id, err := s.mintVoiceSession(r.Context(), userID)
 	if err != nil {
 		slog.Error("voice: mint session", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -471,7 +471,7 @@ func (s *Server) restVoiceRefine(w http.ResponseWriter, r *http.Request) {
 // realtime transcription session, turning raw PCM frames from the browser into
 // input_audio_buffer events.
 func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.voiceSessions.Claim(r.URL.Query().Get("session")); !ok {
+	if _, ok := s.claimVoiceSession(r.Context(), r.URL.Query().Get("session")); !ok {
 		http.Error(w, "unknown or expired voice session", http.StatusForbidden)
 		return
 	}
