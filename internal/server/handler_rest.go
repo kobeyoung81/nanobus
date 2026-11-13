@@ -24,6 +24,9 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/outbound/complete", s.restOutboundComplete)
 
 	// SSE streaming (gateway ← bus)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	mux.HandleFunc("GET /api/v1/outbound/stream", s.restOutboundStream)
 	mux.HandleFunc("GET /api/v1/outbound/cursor", s.restOutboundCursor)
 	mux.HandleFunc("GET /api/v1/events/stream", s.restEventsStream)

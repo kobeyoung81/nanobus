@@ -254,8 +254,9 @@ func (s *Server) ListenAndServe(addr string) error {
 // Anything else — including the WebSocket catch-all, which drives the same
 // handlers as the REST API — requires the token.
 func (s *Server) protectedRequest(r *http.Request) bool {
-	// /metrics is an anonymous scrape inside the internal network (D7).
-	if r.URL.Path == "/metrics" {
+	// /metrics is an anonymous scrape inside the internal network (D7);
+	// /healthz is what an orchestrator's probe calls, and a probe has no token.
+	if r.URL.Path == "/metrics" || r.URL.Path == "/healthz" {
 		return false
 	}
 	return r.URL.Path != voiceWSPath && !isDirectoryConsolePath(r.URL.Path)

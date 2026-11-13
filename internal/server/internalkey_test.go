@@ -170,3 +170,14 @@ func TestInternalKeyGuard_OtherAuthRoutesStillRequireTheToken(t *testing.T) {
 		}
 	}
 }
+
+// TestHealthzIsOpenWithoutTheToken: an orchestrator's probe has no token, and
+// liveness must not depend on one.
+func TestHealthzIsOpenWithoutTheToken(t *testing.T) {
+	s := wireServer(t, WithInternalToken("s3cret"))
+	rec := httptest.NewRecorder()
+	s.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
