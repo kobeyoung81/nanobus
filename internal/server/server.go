@@ -39,10 +39,15 @@ type Server struct {
 	// above stays for gateways that still subscribe per channel.
 	streams   streamEventStore
 	coalescer *stream.Coalescer
+	// eventTailer follows the event log and fans it out to this replica's
+	// subscribers. One per replica: the database sees a single reader whatever
+	// the number of open streams.
+	eventTailer *stream.Tailer[stream.Event]
 	// platform is the durable change-notification log (config, capabilities,
 	// agents); voiceStore holds the one-time voice ids. Both let a second
 	// replica serve what the first one published.
 	platform          platformEventStore
+	platformTailer    *stream.Tailer[stream.PlatformEvent]
 	voiceStore        voiceSessionStore
 	sse               *sseHub
 	events            *sseHub
@@ -53,6 +58,7 @@ type Server struct {
 	internalKey       *middleware.InternalKey
 	internalToken     string
 	maxContentBytes   int
+	tailerCancel      context.CancelFunc
 	mu                sync.Mutex
 }
 
@@ -171,16 +177,15 @@ func WithInternalToken(token string) ServerOption {
 
 // NewServer creates a new bus Server backed by the given store.
 func NewServer(s *store.Store, opts ...ServerOption) *Server {
-	streams := streamStoreFor(s)
+	eventStore := streamStoreFor(s)
+	platformStore := platformStoreFor(s)
 	server := &Server{
 		store: s,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 		chunks:            stream.NewChunkBuffer(1000),
-		streams:           streams,
-		coalescer:         coalescerFor(streams),
-		platform:          platformStoreFor(s),
+		platform:          nil,
 		voiceStore:        voiceStoreFor(s),
 		sse:               newSSEHub(),
 		events:            newSSEHub(),
@@ -188,6 +193,18 @@ func NewServer(s *store.Store, opts ...ServerOption) *Server {
 		terminalSubs:      newTerminalSubRegistry(),
 		voiceSessions:     newVoiceSessionRegistry(voiceSessionTTL),
 		maxContentBytes:   DefaultMaxContentBytes,
+	}
+	// A bare *stream.Store in an interface field is not nil: assign only when
+	// the database exists, so every "is durable streaming available?" check
+	// keeps working.
+	if eventStore != nil {
+		server.streams = eventStore
+		server.coalescer = coalescerFor(eventStore)
+		server.eventTailer = stream.NewEventTailer(eventStore)
+	}
+	if platformStore != nil {
+		server.platform = platformStore
+		server.platformTailer = stream.NewPlatformTailer(platformStore)
 	}
 	for _, opt := range opts {
 		opt(server)
@@ -233,6 +250,7 @@ func (s *Server) ListenAndServe(addr string) error {
 
 	slog.Info("bus started", "addr", ln.Addr().String())
 
+	s.startTailers()
 	s.srv = &http.Server{Handler: s.handler()}
 
 	return s.srv.Serve(ln)
@@ -272,12 +290,35 @@ func (s *Server) Addr() string {
 	return s.listener.Addr().String()
 }
 
+// startTailers runs one tailer per collection for this replica.
+func (s *Server) startTailers() {
+	if s.eventTailer == nil && s.platformTailer == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.tailerCancel = cancel
+	s.mu.Unlock()
+	if s.eventTailer != nil {
+		go s.eventTailer.Run(ctx)
+	}
+	if s.platformTailer != nil {
+		go s.platformTailer.Run(ctx)
+	}
+}
+
 // Close gracefully shuts down the server.
 func (s *Server) Close() error {
 	// Flush buffered stream writes before the process goes away.
 	if s.coalescer != nil {
 		s.coalescer.FlushAll()
 	}
+	s.mu.Lock()
+	if s.tailerCancel != nil {
+		s.tailerCancel()
+		s.tailerCancel = nil
+	}
+	s.mu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.srv != nil {

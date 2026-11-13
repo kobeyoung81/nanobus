@@ -30,7 +30,7 @@ type voiceSessionStore interface {
 	Claim(ctx context.Context, id string) (userID string, ok bool, err error)
 }
 
-func platformStoreFor(st *store.Store) platformEventStore {
+func platformStoreFor(st *store.Store) *stream.PlatformStore {
 	if st == nil {
 		return nil
 	}

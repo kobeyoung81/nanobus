@@ -112,7 +112,40 @@ func (s *Store) Append(ctx context.Context, ev Event) (string, error) {
 		return "", fmt.Errorf("insert stream event: %w", err)
 	}
 	id, _ := res.InsertedID.(bson.ObjectID)
+	s.noteAppend(ctx, ev)
+	return id.Hex(), nil
+}
 
+// AppendMany stores a batch in one round trip. Order inside the batch is the
+// insertion order, so a chunk written together with its completion keeps that
+// order in the log as well.
+func (s *Store) AppendMany(ctx context.Context, evs []Event) error {
+	if len(evs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	docs := make([]any, len(evs))
+	for i := range evs {
+		if evs[i].ChatID == "" {
+			return fmt.Errorf("chat_id is required")
+		}
+		if evs[i].At.IsZero() {
+			evs[i].At = now
+		}
+		docs[i] = evs[i]
+	}
+	if _, err := s.coll.InsertMany(ctx, docs); err != nil {
+		return fmt.Errorf("insert stream events: %w", err)
+	}
+	for _, ev := range evs {
+		s.noteAppend(ctx, ev)
+	}
+	return nil
+}
+
+// noteAppend keeps the per-conversation trim counter and trims when it is due.
+// Trimming is housekeeping: a failure must not fail the event.
+func (s *Store) noteAppend(ctx context.Context, ev Event) {
 	key := conversationKey(ev.Channel, ev.ChatID)
 	s.mu.Lock()
 	s.trims[key]++
@@ -122,12 +155,55 @@ func (s *Store) Append(ctx context.Context, ev Event) (string, error) {
 	}
 	s.mu.Unlock()
 	if trim {
-		if err := s.Trim(ctx, ev.Channel, ev.ChatID, KeepPerConversation); err != nil {
-			// Trimming is housekeeping: a failure must not fail the event.
-			return id.Hex(), nil
-		}
+		_ = s.Trim(ctx, ev.Channel, ev.ChatID, KeepPerConversation)
 	}
-	return id.Hex(), nil
+}
+
+// scanAll returns events after afterID across every conversation, oldest first.
+// The tailer uses it as the safety net behind the change stream: one query per
+// replica regardless of how many subscribers are connected.
+func (s *Store) scanAll(ctx context.Context, afterID string, limit int) ([]Event, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	filter := bson.D{}
+	if afterID != "" {
+		oid, err := bson.ObjectIDFromHex(afterID)
+		if err != nil {
+			return nil, nil
+		}
+		filter = bson.D{{Key: "_id", Value: bson.D{{Key: "$gt", Value: oid}}}}
+	}
+	cursor, err := s.coll.Find(ctx, filter,
+		options.Find().SetSort(bson.D{{Key: "_id", Value: 1}}).SetLimit(int64(limit)))
+	if err != nil {
+		return nil, fmt.Errorf("scan stream events: %w", err)
+	}
+	events := []Event{}
+	if err := cursor.All(ctx, &events); err != nil {
+		return nil, fmt.Errorf("decode stream events: %w", err)
+	}
+	return events, nil
+}
+
+// newestEvent is the newest id in the whole collection ("" when empty). A
+// freshly started tailer begins here: everything older is served by a
+// subscriber's own replay, and re-publishing ten minutes of history to nobody
+// would only cost queries.
+func (s *Store) newestEvent(ctx context.Context) (string, error) {
+	var doc struct {
+		ID bson.ObjectID `bson:"_id"`
+	}
+	err := s.coll.FindOne(ctx, bson.D{},
+		options.FindOne().SetSort(bson.D{{Key: "_id", Value: -1}}).SetProjection(bson.D{{Key: "_id", Value: 1}}),
+	).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read newest stream event: %w", err)
+	}
+	return doc.ID.Hex(), nil
 }
 
 // Since returns the events after afterID, oldest first. afterID is the hex id a

@@ -24,8 +24,10 @@ const PlatformEventsCollection = "bus_platform_events"
 const (
 	// PlatformEventTTL bounds replay: a subscriber that reconnects inside the
 	// window catches up; beyond it, notifications are re-derivable anyway (each
-	// one only tells the receiver to re-read something).
-	PlatformEventTTL = 10 * time.Minute
+	// one only tells the receiver to re-read something). It is a day, not ten
+	// minutes: these events are rare, and a client that was off overnight should
+	// still learn that the catalogue changed.
+	PlatformEventTTL = 24 * time.Hour
 	// KeepPlatformEvents bounds the collection's size regardless of TTL.
 	KeepPlatformEvents = 10000
 	platformTrimEvery  = 500

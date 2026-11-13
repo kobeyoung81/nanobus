@@ -345,8 +345,8 @@ func (s *Server) broadcastOutbound(msg nanoprotocol.OutboundMessage) {
 }
 
 // restEventsStream opens the platform change stream (config, capabilities,
-// agents, models). It reads the durable log so a subscriber on any replica sees
-// every change; the in-memory hub is only the wake-up.
+// agents, models). Replay comes from the durable log, live delivery from this
+// replica's tailer: one reader per replica, not one per subscriber.
 func (s *Server) restEventsStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -395,36 +395,108 @@ func (s *Server) restEventsStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sub := s.events.subscribe("events")
-	defer s.events.unsubscribe("events", sub)
 	metrics.StreamSubscribers.Inc()
 	defer metrics.StreamSubscribers.Dec()
+
+	if s.platformTailer == nil {
+		s.eventsStreamPolling(r.Context(), sw, lastID)
+		return
+	}
+
+	// Subscribe before replaying (see streamConversation).
+	sub := s.platformTailer.Subscribe("")
+	defer sub.Close()
+
+	if err := s.replayPlatformEvents(r.Context(), sw, &lastID); err != nil {
+		return
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev, ok := <-sub.Events():
+			if !ok {
+				return
+			}
+			if err := s.sendPlatformEvent(sw, ev, &lastID); err != nil {
+				return
+			}
+		case <-sub.Lag():
+			if err := s.replayPlatformEvents(r.Context(), sw, &lastID); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// sendPlatformEvent writes one notification unless the client already has it.
+func (s *Server) sendPlatformEvent(sw *sseWriter, ev stream.PlatformEvent, lastID *string) error {
+	hex := ev.ID.Hex()
+	if hex == "" || hex <= *lastID {
+		return nil
+	}
+	out := stream.ChunkEvent{Type: ev.Type, Content: ev.Content}
+	if err := sw.event(out.Type, hex, out); err != nil {
+		return err
+	}
+	*lastID = hex
+	return nil
+}
+
+func (s *Server) replayPlatformEvents(ctx context.Context, sw *sseWriter, lastID *string) error {
+	for {
+		events, err := s.platform.Since(ctx, *lastID, 500)
+		if err != nil {
+			slog.Warn("platform events: read failed", "error", err)
+			return nil
+		}
+		for _, ev := range events {
+			if err := s.sendPlatformEvent(sw, ev, lastID); err != nil {
+				return err
+			}
+		}
+		if len(events) < 500 {
+			return nil
+		}
+	}
+}
+
+// eventsStreamPolling is the no-tailer path.
+func (s *Server) eventsStreamPolling(ctx context.Context, sw *sseWriter, lastID string) {
+	sub := s.events.subscribe("events")
+	defer s.events.unsubscribe("events", sub)
 
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		events, err := s.platform.Since(r.Context(), lastID, 500)
+		events, err := s.platform.Since(ctx, lastID, 500)
 		if err != nil {
 			slog.Warn("platform events: read failed", "error", err)
 		}
-		for _, ev := range events {
-			out := stream.ChunkEvent{Type: ev.Type, Content: ev.Content}
-			if err := sw.event(out.Type, ev.ID.Hex(), out); err != nil {
-				return
-			}
-			lastID = ev.ID.Hex()
+		if err := s.sendPlatformEventList(sw, events, &lastID); err != nil {
+			return
 		}
 		if len(events) > 0 {
 			continue
 		}
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-sub.ch:
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Server) sendPlatformEventList(sw *sseWriter, events []stream.PlatformEvent, lastID *string) error {
+	for _, ev := range events {
+		if err := s.sendPlatformEvent(sw, ev, lastID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // emitConfigChanged broadcasts a config_changed notification for the key.

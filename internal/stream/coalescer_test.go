@@ -96,3 +96,77 @@ func TestCoalescerFlushAllWritesEverything(t *testing.T) {
 		t.Fatalf("a closed coalescer accepted more events")
 	}
 }
+
+// batchedAppends records AppendMany calls, keeping the order inside each batch.
+type batchedAppends struct {
+	mu      sync.Mutex
+	batches [][]Event
+}
+
+func (b *batchedAppends) Append(_ context.Context, ev Event) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.batches = append(b.batches, []Event{ev})
+	return "id", nil
+}
+
+func (b *batchedAppends) AppendMany(_ context.Context, evs []Event) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.batches = append(b.batches, append([]Event(nil), evs...))
+	return nil
+}
+
+func (b *batchedAppends) calls() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.batches)
+}
+
+func (b *batchedAppends) flat() []Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []Event
+	for _, batch := range b.batches {
+		out = append(out, batch...)
+	}
+	return out
+}
+
+// TestCoalescerBatchesAcrossConversations: merged rows from different
+// conversations leave in one insertMany per window, not one round trip each.
+func TestCoalescerBatchesAcrossConversations(t *testing.T) {
+	rec := &batchedAppends{}
+	c := NewCoalescer(rec, 5*time.Millisecond)
+
+	c.Add(Event{Channel: "web", ChatID: "c1", Type: "chunk", Kind: "content", MessageID: "m1", Content: "a"})
+	c.Add(Event{Channel: "web", ChatID: "c2", Type: "chunk", Kind: "content", MessageID: "m2", Content: "b"})
+	c.Add(Event{Channel: "web", ChatID: "c3", Type: "chunk", Kind: "content", MessageID: "m3", Content: "c"})
+	time.Sleep(80 * time.Millisecond)
+
+	if got := rec.calls(); got != 1 {
+		t.Fatalf("database calls = %d, want one batch", got)
+	}
+	if got := len(rec.flat()); got != 3 {
+		t.Fatalf("events written = %d, want 3", got)
+	}
+}
+
+// TestCoalescerCompletionIsDurableBeforeReturn: the gateway closes its
+// subscription on the completion, so both it and the answer before it must be
+// written by the time Add returns.
+func TestCoalescerCompletionIsDurableBeforeReturn(t *testing.T) {
+	rec := &batchedAppends{}
+	c := NewCoalescer(rec, time.Minute) // only the completion may flush
+
+	c.Add(Event{Channel: "web", ChatID: "c1", Type: "chunk", Kind: "content", MessageID: "m1", Content: "hi"})
+	c.Add(Event{Channel: "web", ChatID: "c1", Type: "complete", MessageID: "m1", FullContent: "hi"})
+
+	events := rec.flat()
+	if len(events) != 2 {
+		t.Fatalf("stored %d events when Add returned, want chunk + completion", len(events))
+	}
+	if events[0].Type != "chunk" || events[1].Type != "complete" {
+		t.Fatalf("stored order = %v, %v", events[0].Type, events[1].Type)
+	}
+}

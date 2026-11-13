@@ -102,3 +102,38 @@ func TestMigrationRecordNamesMatchTheManifests(t *testing.T) {
 		}
 	}
 }
+
+// TestMigrations_MoveThePlatformEventTTLToADay: platform notifications used to
+// expire after ten minutes, which lost the "the catalogue changed overnight"
+// signal for a client that was installed fresh the next morning. The manifest
+// had to be a collMod (008 already created the index, and creating an index
+// again with different options fails), so the end state is what matters here.
+func TestMigrations_MoveThePlatformEventTTLToADay(t *testing.T) {
+	s := storetest.Connect(t)
+	ctx := context.Background()
+
+	cursor, err := s.DB().Collection("bus_platform_events").Indexes().List(ctx)
+	if err != nil {
+		t.Fatalf("list indexes: %v", err)
+	}
+	var found bool
+	for cursor.Next(ctx) {
+		var ix struct {
+			Name               string `bson:"name"`
+			ExpireAfterSeconds *int32 `bson:"expireAfterSeconds"`
+		}
+		if err := cursor.Decode(&ix); err != nil {
+			t.Fatalf("decode index: %v", err)
+		}
+		if ix.Name != "expiry" {
+			continue
+		}
+		found = true
+		if ix.ExpireAfterSeconds == nil || *ix.ExpireAfterSeconds != 86400 {
+			t.Fatalf("platform event TTL = %v, want 86400", ix.ExpireAfterSeconds)
+		}
+	}
+	if !found {
+		t.Fatal("the platform event log has no expiry index")
+	}
+}

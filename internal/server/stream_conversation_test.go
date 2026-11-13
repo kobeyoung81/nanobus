@@ -217,3 +217,43 @@ func TestConversationStreamNeedsAStore(t *testing.T) {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
 	}
 }
+
+// TestConversationStreamStopsPollingWithATailer: once the replica has a
+// tailer, the log is read once to replay and live events arrive through the
+// tailer. A connected client must not keep querying the database — that is the
+// whole point of the tailer (database load per replica, not per subscriber).
+func TestConversationStreamStopsPollingWithATailer(t *testing.T) {
+	fake := &fakeStreamStore{steps: []func(string) ([]stream.Event, error){
+		func(string) ([]stream.Event, error) { return nil, nil },
+	}}
+	s := NewServer(nil)
+	s.streams = fake
+	// A tailer with no collection: it can register subscribers, which is all
+	// the handler needs to stop polling.
+	s.eventTailer = stream.NewEventTailer(&stream.Store{})
+
+	mux := http.NewServeMux()
+	s.registerRESTRoutes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/v1/outbound/stream?channel=web&chat_id=c1", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+
+	// Wait longer than several polling periods would have needed.
+	time.Sleep(700 * time.Millisecond)
+	cancel()
+	_ = resp.Body.Close()
+
+	fake.mu.Lock()
+	calls := len(fake.calls)
+	fake.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("Since calls = %d, want one replay query and no polling", calls)
+	}
+}

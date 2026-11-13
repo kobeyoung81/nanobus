@@ -23,7 +23,7 @@ type streamEventStore interface {
 // streamStoreFor builds the store from the server's database. A server without
 // a store (tests, or a deliberately degraded start) keeps the in-memory ring
 // only, which is what the pre-stage-5 behaviour was.
-func streamStoreFor(st *store.Store) streamEventStore {
+func streamStoreFor(st *store.Store) *stream.Store {
 	if st == nil {
 		return nil
 	}
@@ -87,15 +87,13 @@ func (s *Server) recordAndBroadcast(ctx context.Context, ev stream.ChunkEvent) e
 	return appendErr
 }
 
-// streamConversation serves one conversation's events from the durable log.
+// streamConversation serves one conversation's events.
 //
-// Polling (250 ms) plus a local wake-up covers both cases without a change
-// stream: a subscriber on the replica that wrote the event wakes immediately,
-// and one on another replica picks it up on the next poll. Replay and live
-// delivery are the same query, so a reconnect is just a different starting id.
+// The log is the cursor of record: what a client missed is read from it once,
+// then the replica's tailer pushes what happens next. Polling the collection per
+// subscriber is the fallback for a server without a tailer (tests, degraded
+// start).
 func (s *Server) streamConversation(ctx context.Context, sw *sseWriter, r *http.Request, channel, chatID string, lastID string) {
-	sub := s.sse.subscribe(conversationSubject(channel, chatID))
-	defer s.sse.unsubscribe(conversationSubject(channel, chatID), sub)
 	metrics.StreamSubscribers.Inc()
 	defer metrics.StreamSubscribers.Dec()
 
@@ -114,6 +112,94 @@ func (s *Server) streamConversation(ctx context.Context, sw *sseWriter, r *http.
 		}
 	}
 
+	if s.eventTailer == nil {
+		s.streamConversationPolling(ctx, sw, channel, chatID, lastID)
+		return
+	}
+
+	// Subscribe before replaying: anything that happens during the replay is
+	// buffered, and the id guard below drops the overlap instead of losing it.
+	sub := s.eventTailer.Subscribe(conversationSubject(channel, chatID))
+	defer sub.Close()
+
+	if err := s.replayConversation(ctx, sw, channel, chatID, &lastID); err != nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-sub.Events():
+			if !ok {
+				return
+			}
+			if err := s.sendConversationEvent(sw, ev, &lastID); err != nil {
+				return
+			}
+		case <-sub.Lag():
+			// The tailer dropped events for this subscriber: read the log from
+			// where it stopped instead of leaving a hole in the answer.
+			if err := s.replayConversation(ctx, sw, channel, chatID, &lastID); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// sendConversationEvent writes one event unless the client already has it.
+func (s *Server) sendConversationEvent(sw *sseWriter, ev stream.Event, lastID *string) error {
+	hex := ev.ID.Hex()
+	if hex == "" || hex <= *lastID {
+		return nil
+	}
+	out := ev.ToChunkEvent()
+	if err := sw.event(out.Type, hex, out); err != nil {
+		return err
+	}
+	*lastID = hex
+	return nil
+}
+
+// replayConversation catches the client up from the log. A cursor older than
+// the retained window tells the client to reset, then continues from what is
+// still there.
+func (s *Server) replayConversation(ctx context.Context, sw *sseWriter, channel, chatID string, lastID *string) error {
+	for {
+		events, err := s.streams.Since(ctx, channel, chatID, *lastID, 200)
+		if err != nil {
+			if err == stream.ErrCursorExpired {
+				if err := sw.event("reset", "", map[string]any{
+					"type":    "reset",
+					"reason":  "cursor_expired",
+					"channel": channel,
+					"chat_id": chatID,
+				}); err != nil {
+					return err
+				}
+				*lastID = ""
+				continue
+			}
+			slog.Warn("stream: read conversation events failed", "channel", channel, "chat_id", chatID, "error", err)
+			return nil
+		}
+		for _, ev := range events {
+			if err := s.sendConversationEvent(sw, ev, lastID); err != nil {
+				return err
+			}
+		}
+		if len(events) < 200 {
+			return nil
+		}
+	}
+}
+
+// streamConversationPolling is the no-tailer path: replay and live delivery are
+// the same query, woken early by a local write.
+func (s *Server) streamConversationPolling(ctx context.Context, sw *sseWriter, channel, chatID string, lastID string) {
+	sub := s.sse.subscribe(conversationSubject(channel, chatID))
+	defer s.sse.unsubscribe(conversationSubject(channel, chatID), sub)
+
 	poll := time.NewTicker(250 * time.Millisecond)
 	defer poll.Stop()
 
@@ -121,8 +207,6 @@ func (s *Server) streamConversation(ctx context.Context, sw *sseWriter, r *http.
 		events, err := s.streams.Since(ctx, channel, chatID, lastID, 200)
 		if err != nil {
 			if err == stream.ErrCursorExpired {
-				// The client was away longer than the retained window. Tell it to
-				// reset, then continue from what we still have.
 				if err := sw.event("reset", "", map[string]any{
 					"type":    "reset",
 					"reason":  "cursor_expired",
@@ -137,11 +221,9 @@ func (s *Server) streamConversation(ctx context.Context, sw *sseWriter, r *http.
 			slog.Warn("stream: read conversation events failed", "channel", channel, "chat_id", chatID, "error", err)
 		}
 		for _, ev := range events {
-			out := ev.ToChunkEvent()
-			if err := sw.event(out.Type, ev.ID.Hex(), out); err != nil {
+			if err := s.sendConversationEvent(sw, ev, &lastID); err != nil {
 				return
 			}
-			lastID = ev.ID.Hex()
 		}
 		if len(events) > 0 {
 			continue

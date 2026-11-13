@@ -165,11 +165,24 @@ func (s *Store) applyMongoMigration(ctx context.Context, spec mongoMigration) er
 			}
 		}
 
-		if len(cs.Indexes) == 0 {
+		// An index whose options changed is dropped here and created below with
+		// the new ones. "Not found" is fine: a fresh install has not created it
+		// under the old options at all.
+		for _, ix := range cs.ReplaceIndexes {
+			if ix.Name == "" {
+				return fmt.Errorf("collection %s: replaceIndexes needs an index name", name)
+			}
+			if err := s.db.Collection(name).Indexes().DropOne(ctx, ix.Name); err != nil && !isIndexNotFound(err) {
+				return fmt.Errorf("drop index %s on %s: %w", ix.Name, name, err)
+			}
+		}
+
+		specs := append(append([]indexSpec{}, cs.Indexes...), cs.ReplaceIndexes...)
+		if len(specs) == 0 {
 			continue
 		}
-		models := make([]mongo.IndexModel, 0, len(cs.Indexes))
-		for _, ix := range cs.Indexes {
+		models := make([]mongo.IndexModel, 0, len(specs))
+		for _, ix := range specs {
 			opts := options.Index()
 			if ix.Name != "" {
 				opts.SetName(ix.Name)
@@ -208,7 +221,13 @@ type mongoMigration struct {
 }
 
 type collectionSpec struct {
-	Indexes          []indexSpec     `json:"indexes"`
+	Indexes []indexSpec `json:"indexes"`
+	// ReplaceIndexes are indexes an earlier manifest created whose options have
+	// since changed (a TTL, typically). Creating one again with different
+	// options fails ("already exists with different options"), and collMod needs
+	// the dbAdmin role the service does not have, so the honest operation is
+	// drop-then-create. Dropping a TTL index for an instant only delays purging.
+	ReplaceIndexes   []indexSpec     `json:"replaceIndexes,omitempty"`
 	Validator        json.RawMessage `json:"validator,omitempty"`
 	ValidationLevel  string          `json:"validationLevel,omitempty"`
 	ValidationAction string          `json:"validationAction,omitempty"`
@@ -300,7 +319,26 @@ func parseMongoMigration(manifest string) (mongoMigration, error) {
 	if len(spec.Collections) == 0 {
 		return spec, fmt.Errorf("manifest declares no collections")
 	}
+	// A replacement without a name would silently do nothing: there would be
+	// nothing to drop and no index to name in the log.
+	for name, cs := range spec.Collections {
+		for i, ix := range cs.ReplaceIndexes {
+			if ix.Name == "" {
+				return spec, fmt.Errorf("collection %s: replaceIndexes[%d] has no name", name, i)
+			}
+		}
+	}
 	return spec, nil
+}
+
+// isIndexNotFound reports MongoDB's IndexNotFound (27) and NamespaceNotFound
+// (26): both mean "there is nothing to drop".
+func isIndexNotFound(err error) bool {
+	var ce mongo.CommandError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	return ce.Code == 27 || ce.Code == 26
 }
 
 // isNamespaceExists reports MongoDB's "namespace exists" command error (48),

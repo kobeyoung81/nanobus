@@ -5,7 +5,7 @@
         {
           "name": "expiry",
           "keys": [["at", 1]],
-          "expireAfterSeconds": 600
+          "expireAfterSeconds": 86400
         }
       ]
     }
