@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/metrics"
 	"gitee.com/kobeyoung81/nanobus/internal/stream"
 	"gitee.com/kobeyoung81/nanoprotocol"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -396,6 +397,8 @@ func (s *Server) restEventsStream(w http.ResponseWriter, r *http.Request) {
 
 	sub := s.events.subscribe("events")
 	defer s.events.unsubscribe("events", sub)
+	metrics.StreamSubscribers.Inc()
+	defer metrics.StreamSubscribers.Dec()
 
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()

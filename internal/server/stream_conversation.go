@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/metrics"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/stream"
 )
@@ -34,11 +35,31 @@ func streamStoreFor(st *store.Store) streamEventStore {
 // receiving events.
 func conversationSubject(channel, chatID string) string { return channel + "\x00" + chatID }
 
+// coalescerFor builds the write coalescer when a database is configured.
+func coalescerFor(streams streamEventStore) *stream.Coalescer {
+	appender, ok := streams.(stream.Appender)
+	if !ok {
+		return nil
+	}
+	return stream.NewCoalescer(appender, 200*time.Millisecond)
+}
+
 // recordAndBroadcast persists one event and wakes every subscriber: the
 // conversation's own (durable, replayable) and the channel's legacy one.
 func (s *Server) recordAndBroadcast(ctx context.Context, ev stream.ChunkEvent) error {
+	metrics.StreamEventsWritten.WithLabelValues(ev.Type).Inc()
 	var appendErr error
-	if s.streams != nil {
+	if s.coalescer != nil {
+		// The coalescer writes in the background; the caller's answer does not
+		// wait for the database.
+		s.coalescer.Add(stream.Event{
+			Channel: ev.Channel, ChatID: ev.ChatID, Type: ev.Type, Kind: ev.Kind,
+			MessageID: ev.MessageID, Seq: ev.Seq, Content: ev.Content,
+			FullContent: ev.FullContent, Summary: ev.Summary,
+			Error: ev.Error, ErrorDetail: ev.ErrorDetail,
+			AgentID: ev.AgentID, UserID: ev.UserID, SessionID: ev.SessionID,
+		})
+	} else if s.streams != nil {
 		writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		_, appendErr = s.streams.Append(writeCtx, stream.Event{
 			Channel:     ev.Channel,
@@ -75,6 +96,8 @@ func (s *Server) recordAndBroadcast(ctx context.Context, ev stream.ChunkEvent) e
 func (s *Server) streamConversation(ctx context.Context, sw *sseWriter, r *http.Request, channel, chatID string, lastID string) {
 	sub := s.sse.subscribe(conversationSubject(channel, chatID))
 	defer s.sse.unsubscribe(conversationSubject(channel, chatID), sub)
+	metrics.StreamSubscribers.Inc()
+	defer metrics.StreamSubscribers.Dec()
 
 	// A cursor this process cannot parse cannot be resumed from.
 	if lastID != "" {

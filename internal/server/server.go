@@ -14,6 +14,7 @@ import (
 
 	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
+	"gitee.com/kobeyoung81/nanobus/internal/metrics"
 	"gitee.com/kobeyoung81/nanobus/internal/middleware"
 	"gitee.com/kobeyoung81/nanobus/internal/portalclient"
 	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
@@ -36,7 +37,8 @@ type Server struct {
 	chunks      *stream.ChunkBuffer
 	// streams is the durable, per-conversation event log. The in-memory ring
 	// above stays for gateways that still subscribe per channel.
-	streams streamEventStore
+	streams   streamEventStore
+	coalescer *stream.Coalescer
 	// platform is the durable change-notification log (config, capabilities,
 	// agents); voiceStore holds the one-time voice ids. Both let a second
 	// replica serve what the first one published.
@@ -169,13 +171,15 @@ func WithInternalToken(token string) ServerOption {
 
 // NewServer creates a new bus Server backed by the given store.
 func NewServer(s *store.Store, opts ...ServerOption) *Server {
+	streams := streamStoreFor(s)
 	server := &Server{
 		store: s,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 		chunks:            stream.NewChunkBuffer(1000),
-		streams:           streamStoreFor(s),
+		streams:           streams,
+		coalescer:         coalescerFor(streams),
 		platform:          platformStoreFor(s),
 		voiceStore:        voiceStoreFor(s),
 		sse:               newSSEHub(),
@@ -199,6 +203,9 @@ func (s *Server) handler() http.Handler {
 
 	// REST API endpoints (registered before catch-all WS handler)
 	s.registerRESTRoutes(mux)
+
+	// Operational numbers for a scraper. Internal network, anonymous (D7).
+	mux.Handle("GET /metrics", metrics.Handler())
 
 	// WebSocket catch-all (legacy compatibility + future WS clients)
 	mux.HandleFunc("/", s.handleHTTP)
@@ -247,6 +254,10 @@ func (s *Server) ListenAndServe(addr string) error {
 // Anything else — including the WebSocket catch-all, which drives the same
 // handlers as the REST API — requires the token.
 func (s *Server) protectedRequest(r *http.Request) bool {
+	// /metrics is an anonymous scrape inside the internal network (D7).
+	if r.URL.Path == "/metrics" {
+		return false
+	}
 	return r.URL.Path != voiceWSPath && !isDirectoryConsolePath(r.URL.Path)
 }
 
@@ -262,6 +273,10 @@ func (s *Server) Addr() string {
 
 // Close gracefully shuts down the server.
 func (s *Server) Close() error {
+	// Flush buffered stream writes before the process goes away.
+	if s.coalescer != nil {
+		s.coalescer.FlushAll()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.srv != nil {
