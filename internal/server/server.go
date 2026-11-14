@@ -53,13 +53,19 @@ type Server struct {
 	events            *sseHub
 	hypervisorTunnels *hypervisorTunnelRegistry
 	terminalSubs      *terminalSubRegistry
-	voiceSessions     *voiceSessionRegistry
-	rateLimiter       *middleware.RateLimiter
-	internalKey       *middleware.InternalKey
-	internalToken     string
-	maxContentBytes   int
-	tailerCancel      context.CancelFunc
-	mu                sync.Mutex
+	// agentSockets are this replica's agent WebSocket connections. Pushes come
+	// from the tailers below, so no routing between replicas is needed.
+	agentSockets *agentSocketRegistry
+	// inboundTailer follows the inbound queue: an insert means "an agent has
+	// something to claim".
+	inboundTailer   *stream.Tailer[stream.InboundNotice]
+	voiceSessions   *voiceSessionRegistry
+	rateLimiter     *middleware.RateLimiter
+	internalKey     *middleware.InternalKey
+	internalToken   string
+	maxContentBytes int
+	tailerCancel    context.CancelFunc
+	mu              sync.Mutex
 }
 
 // DefaultMaxContentBytes bounds a single message's content when no option is
@@ -191,6 +197,7 @@ func NewServer(s *store.Store, opts ...ServerOption) *Server {
 		events:            newSSEHub(),
 		hypervisorTunnels: newHypervisorTunnelRegistry(),
 		terminalSubs:      newTerminalSubRegistry(),
+		agentSockets:      newAgentSocketRegistry(),
 		voiceSessions:     newVoiceSessionRegistry(voiceSessionTTL),
 		maxContentBytes:   DefaultMaxContentBytes,
 	}
@@ -205,6 +212,9 @@ func NewServer(s *store.Store, opts ...ServerOption) *Server {
 	if platformStore != nil {
 		server.platform = platformStore
 		server.platformTailer = stream.NewPlatformTailer(platformStore)
+	}
+	if s != nil {
+		server.inboundTailer = stream.NewInboundTailer(s.InboundQueueCollection())
 	}
 	for _, opt := range opts {
 		opt(server)
@@ -292,7 +302,7 @@ func (s *Server) Addr() string {
 
 // startTailers runs one tailer per collection for this replica.
 func (s *Server) startTailers() {
-	if s.eventTailer == nil && s.platformTailer == nil {
+	if s.eventTailer == nil && s.platformTailer == nil && s.inboundTailer == nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -304,6 +314,15 @@ func (s *Server) startTailers() {
 	}
 	if s.platformTailer != nil {
 		go s.platformTailer.Run(ctx)
+	}
+	if s.inboundTailer != nil {
+		go s.inboundTailer.Run(ctx)
+	}
+	if s.inboundTailer != nil {
+		go s.consumeInboundNotices(ctx)
+	}
+	if s.platformTailer != nil {
+		go s.consumePlatformNotices(ctx)
 	}
 }
 

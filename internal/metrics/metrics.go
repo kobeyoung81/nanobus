@@ -28,6 +28,19 @@ var (
 		Help: "Open stream subscriptions (per conversation and platform events).",
 	})
 
+	// AgentSockets is the number of agent processes connected to this replica
+	// over the WebSocket transport. The fallback poll rate is what it replaces.
+	AgentSockets = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "bus_agent_sockets",
+		Help: "Agent processes connected to this replica over the agent socket.",
+	})
+
+	// AgentSocketPushes counts push frames by kind (inbound, platform).
+	AgentSocketPushes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "bus_agent_socket_pushes_total",
+		Help: "Push frames written to agent sockets, by kind.",
+	}, []string{"kind"})
+
 	// StreamWriteSeconds is the database write latency of stream events.
 	StreamWriteSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "bus_stream_write_seconds",
@@ -37,7 +50,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(StreamEventsWritten, StreamSubscribers, StreamWriteSeconds)
+	prometheus.MustRegister(StreamEventsWritten, StreamSubscribers, StreamWriteSeconds, AgentSockets, AgentSocketPushes)
 }
 
 // Handler serves the Prometheus text exposition.

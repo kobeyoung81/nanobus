@@ -253,7 +253,10 @@ func (t *Tailer[T]) publishOne(item T) {
 	t.cursor = id
 	subject := t.subjectOf(item)
 	for _, sub := range t.subs {
-		if subject != "" && sub.subject != subject {
+		// An empty subject on either side means "everything": the platform
+		// tailer has no subjects, and a replica-level consumer (the agent
+		// socket's inbound notices) wants every user's rows.
+		if subject != "" && sub.subject != "" && sub.subject != subject {
 			continue
 		}
 		select {

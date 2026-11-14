@@ -63,6 +63,11 @@ type storedQueuedMessage struct {
 	CreatedAt time.Time      `bson:"created_at"`
 }
 
+// InboundQueueCollection exposes the inbound queue to the notice tailer: the
+// bus pushes "a message is waiting" from the inserts it sees here, and the
+// atomic claim stays inside this package.
+func (s *Store) InboundQueueCollection() *mongo.Collection { return s.inboundQueue() }
+
 // inboundQueue/outboundQueue are the two collections, configured so a decoded
 // metadata document comes back as a map rather than the driver's bson.D (a list
 // of pairs, which json.Marshal turns into an array of {"Key":…,"Value":…}

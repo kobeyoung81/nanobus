@@ -67,6 +67,43 @@ func TestTailerFansOutByConversation(t *testing.T) {
 	}
 }
 
+// A subscriber with no subject gets everything: that is how one replica-level
+// consumer (the agent socket's inbound notices) follows every user's rows.
+func TestTailerWildcardSubscriberGetsEverySubject(t *testing.T) {
+	tailer := newTestTailer(nil)
+	everything := tailer.Subscribe("")
+	oneChat := tailer.Subscribe(conversationKey("web", "chat-1"))
+	defer everything.Close()
+	defer oneChat.Close()
+
+	tailer.publishOne(testEvent("64b000000000000000000001", "web", "chat-1", "one"))
+	tailer.publishOne(testEvent("64b000000000000000000002", "web", "chat-2", "two"))
+
+	for _, want := range []string{"one", "two"} {
+		select {
+		case ev := <-everything.Events():
+			if ev.Content != want {
+				t.Fatalf("wildcard subscriber got %q, want %q", ev.Content, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("wildcard subscriber missed %q", want)
+		}
+	}
+	select {
+	case ev := <-oneChat.Events():
+		if ev.Content != "one" {
+			t.Fatalf("subject subscriber got %q", ev.Content)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subject subscriber missed its own row")
+	}
+	select {
+	case ev := <-oneChat.Events():
+		t.Fatalf("subject subscriber got another conversation's row: %q", ev.Content)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestTailerSendsEachRowOnce(t *testing.T) {
 	tailer := newTestTailer(nil)
 	sub := tailer.Subscribe(conversationKey("web", "chat-1"))

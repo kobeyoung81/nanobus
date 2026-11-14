@@ -31,6 +31,11 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/outbound/cursor", s.restOutboundCursor)
 	mux.HandleFunc("GET /api/v1/events/stream", s.restEventsStream)
 
+	// The agent socket: one connection per agent process carrying the same
+	// request/response envelope as /api/v1/rpc, plus the two pushes that make
+	// the fallback poll rare.
+	mux.HandleFunc("GET /ws/agent", s.handleAgentSocketWS)
+
 	// Hypervisor tunnels: kept for containers whose image still dials the bus.
 	// Tunnels terminate at the provisioner now (see internal/server/hypervisor_tunnel.go).
 	mux.HandleFunc("GET /ws/hypervisor", s.handleHypervisorTunnelWS)
