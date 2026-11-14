@@ -119,7 +119,12 @@ func (s *Server) handleSetAgentPermission(msg nanoprotocol.Message) *nanoprotoco
 	}
 	typeID := req.TypeID
 	if typeID == "" {
-		typeID = s.store.DefaultModeTypeID(req.AgentID)
+		agent, err := s.lookupAgent(req.AgentID)
+		if err != nil {
+			resp := nanoprotocol.NewErrorMessage("set agent permission: " + err.Error())
+			return &resp
+		}
+		typeID = defaultModeTypeID(*agent)
 	}
 	// One rule at a time, appended to the mode's override — the document is the
 	// admin module's, so the write goes there.

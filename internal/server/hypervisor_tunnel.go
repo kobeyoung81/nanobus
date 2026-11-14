@@ -342,13 +342,13 @@ func (s *Server) forwardHypervisorRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	agent, err := s.store.GetAgent(agentID)
+	agent, err := s.lookupAgent(agentID)
 	if err != nil {
+		if errors.Is(err, errAgentNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if agent == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
 	}
 

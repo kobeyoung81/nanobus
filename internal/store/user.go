@@ -18,9 +18,6 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
-
-	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
 // ErrUserNotFound is returned when a user cannot be resolved.
@@ -37,29 +34,6 @@ var ErrContainerAlreadyRequested = errors.New("container already requested")
 
 // ErrContainerNotFound is returned when no active container request exists to dispose.
 var ErrContainerNotFound = errors.New("container request not found")
-
-const containerRequestsCollection = "provisioner_container_requests"
-
-// asRequest renders one stored request as the protocol type the console and the
-// runtime snapshot read.
-func (d storedContainerRequest) asRequest() nanoprotocol.ContainerRequest {
-	req := nanoprotocol.ContainerRequest{
-		UserID:  d.UserID,
-		AgentID: d.AgentID,
-		Level:   d.Level,
-		Status:  d.Status,
-	}
-	if d.BindingID != nil {
-		req.BindingID = *d.BindingID
-	}
-	return req
-}
-
-// containerRequests is the provisioning queue. The bus reads it for the console and
-// the runtime snapshot; the provisioner writes it.
-func (s *Store) containerRequests() *mongo.Collection {
-	return s.db.Collection(containerRequestsCollection)
-}
 
 // ResolvedBinding describes the resolved binding and owning user.
 type ResolvedBinding struct {
@@ -463,139 +437,10 @@ func (s *Store) setChannelEnabled(userID, channel string, enabled bool) error {
 	return backend.SetChannel(ctx, userID, channel, enabled)
 }
 
-// storedContainerRequest is one provisioning request.
-//
-// Unlike the channel above it stays a document of its own: it has a lifecycle of
-// its own, the runner polls it by status, and its count is not bounded by the
-// user.
-type storedContainerRequest struct {
-	ID     bson.ObjectID `bson:"_id,omitempty"`
-	UserID string        `bson:"user_id"`
-	// Absent when the request is not bound to a channel: the SQL stored NULL
-	// (migration 055), which is what lets a unique index permit many of them.
-	BindingID  *int64     `bson:"binding_id,omitempty"`
-	AgentID    string     `bson:"agent_id,omitempty"`
-	Level      string     `bson:"level"`
-	Status     string     `bson:"status"`
-	RunnerID   string     `bson:"runner_id,omitempty"`
-	DisposedAt *time.Time `bson:"disposed_at,omitempty"`
-	CreatedAt  time.Time  `bson:"created_at"`
-	UpdatedAt  time.Time  `bson:"updated_at"`
-}
-
-type ContainerSummary struct {
-	ID        string
-	UserID    string
-	Level     string
-	Status    string
-	RunnerID  string
-	UpdatedAt time.Time
-}
-
 // bindingAgentID is the agent a binding's container runs: the id the "binding-N"
 // names quote, and the name the provisioning path asks for.
 func bindingAgentID(bindingID int64) string {
 	return "binding-" + strconv.FormatInt(bindingID, 10)
-}
-
-// ListContainerSummaries returns container requests newest first. An empty userID
-// means every user's — the runtime snapshot's view.
-func (s *Store) ListContainerSummaries(userID string, limit int) ([]ContainerSummary, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	filter := bson.D{}
-	if userID != "" {
-		filter = bson.D{{Key: "user_id", Value: userID}}
-	}
-	cur, err := s.containerRequests().Find(ctx, filter,
-		options.Find().
-			SetSort(bson.D{{Key: "updated_at", Value: -1}, {Key: "_id", Value: -1}}).
-			SetLimit(int64(limit)))
-	if err != nil {
-		return nil, fmt.Errorf("list containers: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	out := []ContainerSummary{}
-	for cur.Next(ctx) {
-		var doc storedContainerRequest
-		if err := cur.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("decode container request: %w", err)
-		}
-		out = append(out, ContainerSummary{
-			ID: doc.ID.Hex(), UserID: doc.UserID, Level: doc.Level,
-			Status: doc.Status, RunnerID: doc.RunnerID, UpdatedAt: doc.UpdatedAt,
-		})
-	}
-	return out, cur.Err()
-}
-
-// CountContainersByStatus counts the requests per status. Only the statuses that
-// occur are returned: the caller adds up the buckets it cares about, and a status
-// added later does not have to be enumerated here.
-func (s *Store) CountContainersByStatus() (map[string]int, error) {
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	cur, err := s.containerRequests().Aggregate(ctx, bson.A{
-		bson.D{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$status"},
-			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
-		}}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("count containers: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	out := map[string]int{}
-	for cur.Next(ctx) {
-		var doc struct {
-			Status string `bson:"_id"`
-			Count  int    `bson:"count"`
-		}
-		if err := cur.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("decode container count: %w", err)
-		}
-		out[doc.Status] = doc.Count
-	}
-	return out, cur.Err()
-}
-
-// ListContainers returns a user's container requests, most recent first.
-func (s *Store) ListContainers(userID string, limit int) ([]nanoprotocol.ContainerRequest, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	ctx, cancel := opCtx()
-	defer cancel()
-
-	// _id breaks the tie: created_at has millisecond resolution, and rows written
-	// together must still come back newest-first in a stable order.
-	cur, err := s.containerRequests().Find(ctx,
-		bson.D{{Key: "user_id", Value: userID}},
-		options.Find().
-			SetSort(bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}).
-			SetLimit(int64(limit)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list containers: %w", err)
-	}
-	defer func() { _ = cur.Close(ctx) }()
-
-	requests := []nanoprotocol.ContainerRequest{}
-	for cur.Next(ctx) {
-		var doc storedContainerRequest
-		if err := cur.Decode(&doc); err != nil {
-			return nil, fmt.Errorf("decode container request: %w", err)
-		}
-		requests = append(requests, doc.asRequest())
-	}
-	return requests, cur.Err()
 }
 
 // LastActivityByUser returns the newest message each user has queued, in either

@@ -135,12 +135,12 @@ func (s *Server) handleTerminalBridgeWS(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	agent, err := s.store.GetAgent(agentID)
+	agent, err := s.lookupAgent(agentID)
 	if err != nil {
 		http.Error(w, `{"error":"agent lookup failed"}`, http.StatusInternalServerError)
 		return
 	}
-	if agent == nil || agent.UserID != userID {
+	if agent.UserID != userID {
 		http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 		return
 	}

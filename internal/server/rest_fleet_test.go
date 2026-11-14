@@ -1,13 +1,12 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 )
 
 // The fleet view and the runtime snapshot. Both were SELECTs against MySQL; what
@@ -15,35 +14,24 @@ import (
 // console prints — including the runner a container landed on, which the
 // agent-facing shape does not carry.
 
+// The fleet and the queue are the provisioner's: the stub answers what it would,
+// and the test asserts the console's shape rather than a query the bus no longer
+// runs.
+
 func seedRunnerDoc(t *testing.T, s *Server, id, hostname, status string, registeredAt time.Time) {
 	t.Helper()
-	if _, err := s.store.DB().Collection("provisioner_runners").InsertOne(context.Background(), bson.D{
-		{Key: "_id", Value: id},
-		{Key: "hostname", Value: hostname},
-		{Key: "docker_host", Value: "local"},
-		{Key: "status", Value: status},
-		{Key: "last_heartbeat", Value: registeredAt.Add(time.Minute)},
-		{Key: "registered_at", Value: registeredAt},
-	}); err != nil {
-		t.Fatalf("seed runner %s: %v", id, err)
-	}
+	fleetStubFor(t, s).addRunner(provisionerclient.RunnerSummary{
+		ID: id, Hostname: hostname, DockerHost: "local", Status: status,
+		LastHeartbeat: registeredAt.Add(time.Minute), RegisteredAt: registeredAt,
+	})
 }
 
 func seedContainerDoc(t *testing.T, s *Server, userID, level, status, runnerID string, updatedAt time.Time) {
 	t.Helper()
-	doc := bson.D{
-		{Key: "user_id", Value: userID},
-		{Key: "level", Value: level},
-		{Key: "status", Value: status},
-		{Key: "created_at", Value: updatedAt},
-		{Key: "updated_at", Value: updatedAt},
-	}
-	if runnerID != "" {
-		doc = append(doc, bson.E{Key: "runner_id", Value: runnerID})
-	}
-	if _, err := s.store.DB().Collection("provisioner_container_requests").InsertOne(context.Background(), doc); err != nil {
-		t.Fatalf("seed container for %s: %v", userID, err)
-	}
+	fleetStubFor(t, s).addContainer(provisionerclient.ContainerSummary{
+		ID: "container-" + userID + "-" + status, UserID: userID, Level: level,
+		Status: status, RunnerID: runnerID, CreatedAt: updatedAt, UpdatedAt: updatedAt,
+	})
 }
 
 func TestRestListRunners(t *testing.T) {
@@ -153,5 +141,39 @@ func TestRestListContainerRequests(t *testing.T) {
 	// The console sums the buckets it cares about: two running, one pending.
 	if countBody.ByStatus["running"] != 2 || countBody.ByStatus["pending"] != 1 {
 		t.Fatalf("unexpected buckets: %+v", countBody.ByStatus)
+	}
+}
+
+// TestRestListContainersCarriesTheRequest is the protocol's view of one user's
+// queue: the bus used to read it, and the row it returns has to keep the fields the
+// agent-facing shape carries (which agent, which binding).
+func TestRestListContainersCarriesTheRequest(t *testing.T) {
+	srv := testServerMongo(t)
+	fleetStubFor(t, srv).addContainer(provisionerclient.ContainerSummary{
+		ID: "c-1", UserID: "u-1", AgentID: "u-1-default", BindingID: 7,
+		Level: "pro", Status: "running", RunnerID: "runner-1",
+	})
+
+	rec := accountRequest(t, srv, http.MethodGet, "/api/v1/containers?user_id=u-1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Requests []struct {
+			UserID    string `json:"user_id"`
+			AgentID   string `json:"agent_id"`
+			BindingID int64  `json:"binding_id"`
+			Status    string `json:"status"`
+		} `json:"requests"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Requests) != 1 {
+		t.Fatalf("expected one request, got %+v", body)
+	}
+	got := body.Requests[0]
+	if got.AgentID != "u-1-default" || got.BindingID != 7 || got.Status != "running" {
+		t.Fatalf("the request lost a field: %+v", got)
 	}
 }

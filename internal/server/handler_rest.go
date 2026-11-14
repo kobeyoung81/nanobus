@@ -252,7 +252,7 @@ func (s *Server) restListContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requests, err := s.store.ListContainers(userID, 0)
+	requests, err := s.lookupContainerRequests(r.Context(), userID, 0)
 	if err != nil {
 		slog.Error("list containers", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})

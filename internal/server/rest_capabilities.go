@@ -11,11 +11,13 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/portalagents"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
@@ -24,6 +26,27 @@ const maskValue = "***"
 
 func userIDFromQuery(r *http.Request) string {
 	return r.URL.Query().Get("user_id")
+}
+
+// requireAgentOwner resolves one agent row and checks the caller owns it. The rows
+// are the portal's, so this asks for the row; writing the refusal here keeps the
+// four per-agent capability handlers from repeating it.
+func (s *Server) requireAgentOwner(w http.ResponseWriter, agentID, userID string) (portalagents.Agent, bool) {
+	agent, err := s.lookupAgent(agentID)
+	if err != nil {
+		if errors.Is(err, errAgentNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+			return portalagents.Agent{}, false
+		}
+		slog.Error("agent lookup", "agent_id", agentID, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "agent lookup failed"})
+		return portalagents.Agent{}, false
+	}
+	if agent.UserID != userID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the agent owner"})
+		return portalagents.Agent{}, false
+	}
+	return *agent, true
 }
 
 type agentCapView struct {
@@ -47,19 +70,14 @@ func (s *Server) restAgentCapabilities(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
 		return
 	}
-	owner, err := s.store.AgentOwner(agentID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
-		return
-	}
-	if owner != userID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the agent owner"})
+	agent, ok := s.requireAgentOwner(w, agentID, userID)
+	if !ok {
 		return
 	}
 
 	typeID := r.URL.Query().Get("type_id")
 	if typeID == "" {
-		typeID = s.store.DefaultModeTypeID(agentID)
+		typeID = defaultModeTypeID(agent)
 	}
 	resp, err := s.resolveModeCapabilities(agentID, userID, typeID)
 	if err != nil {
@@ -167,13 +185,8 @@ func (s *Server) restSetAgentPermissions(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
 		return
 	}
-	owner, err := s.store.AgentOwner(agentID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
-		return
-	}
-	if owner != userID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the agent owner"})
+	agent, ok := s.requireAgentOwner(w, agentID, userID)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -189,7 +202,7 @@ func (s *Server) restSetAgentPermissions(w http.ResponseWriter, r *http.Request)
 		typeID = r.URL.Query().Get("type_id")
 	}
 	if typeID == "" {
-		typeID = s.store.DefaultModeTypeID(agentID)
+		typeID = defaultModeTypeID(agent)
 	}
 	// The rules live in the override document, which the admin module owns; this
 	// service decided whose agent and which mode it is, and forwards the list.
@@ -212,13 +225,8 @@ func (s *Server) restSetAgentCapability(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
 		return
 	}
-	owner, err := s.store.AgentOwner(agentID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
-		return
-	}
-	if owner != userID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the agent owner"})
+	agent, ok := s.requireAgentOwner(w, agentID, userID)
+	if !ok {
 		return
 	}
 	var body agentCapBody
@@ -237,7 +245,7 @@ func (s *Server) restSetAgentCapability(w http.ResponseWriter, r *http.Request) 
 	}
 	typeID := body.TypeID
 	if typeID == "" {
-		typeID = s.store.DefaultModeTypeID(agentID)
+		typeID = defaultModeTypeID(agent)
 	}
 	// The override document is the admin module's; this service decided what the
 	// caller meant (owner, mode, visibility) and forwards the write.
@@ -260,13 +268,8 @@ func (s *Server) restDeleteAgentCapability(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
 		return
 	}
-	owner, err := s.store.AgentOwner(agentID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
-		return
-	}
-	if owner != userID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not the agent owner"})
+	agent, ok := s.requireAgentOwner(w, agentID, userID)
+	if !ok {
 		return
 	}
 	kind, ref := r.URL.Query().Get("kind"), r.URL.Query().Get("ref")
@@ -276,7 +279,7 @@ func (s *Server) restDeleteAgentCapability(w http.ResponseWriter, r *http.Reques
 	}
 	typeID := r.URL.Query().Get("type_id")
 	if typeID == "" {
-		typeID = s.store.DefaultModeTypeID(agentID)
+		typeID = defaultModeTypeID(agent)
 	}
 	if err := s.adminPost("/api/v1/internal/agents/"+url.PathEscape(agentID)+"/capabilities/delete", map[string]any{
 		"type_id": typeID, "kind": kind, "ref": ref,

@@ -93,9 +93,10 @@ func TestRestSetAgentMode_ForwardsThePatch(t *testing.T) {
 		t.Fatalf("model_id must be sent (null = unchanged): %+v", body)
 	}
 
-	// The bus no longer writes the document itself.
-	if ov, err := s.store.GetAgentTypeOverride("agent-1", "build"); err != nil || ov != nil {
-		t.Fatalf("the bus wrote the override locally: %+v (err %v)", ov, err)
+	// The bus no longer writes the document itself: the only write is the one it
+	// forwarded, and there is no second call to anything but the audit log.
+	if forwarded := modeCalls(calls); len(forwarded) != 1 {
+		t.Fatalf("the bus wrote the override itself: %+v", calls)
 	}
 }
 

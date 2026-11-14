@@ -2,16 +2,13 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
+	"gitee.com/kobeyoung81/nanobus/internal/portalagents"
 	"gitee.com/kobeyoung81/nanobus/internal/store/storetest"
 )
 
@@ -42,7 +39,55 @@ func testServerMongo(t *testing.T) *Server {
 	st.SetAccountBackend(fake)
 	s.auth = emptyAuthStub(t)
 	accountFakes.Store(s, fake)
+
+	// The other domains answer over their internal APIs: the agent rows are the
+	// portal's, the catalogue is the admin module's, the fleet and the queue are
+	// the provisioner's. Seed these stubs, never their collections.
+	agents := newAgentStub(t)
+	s.agentSource = agents.client(t)
+	agentStubs.Store(s, agents)
+	catalogue := newCatalogueStub(t)
+	s.catalogue = catalogue.client(t)
+	catalogueStubs.Store(s, catalogue)
+	fleet := newFleetStub(t)
+	s.provisioner = fleet.client(t)
+	fleetStubs.Store(s, fleet)
 	return s
+}
+
+// The stubs a server under test was built with, keyed by server: seeding is a
+// property of the instance, not of the package.
+var (
+	agentStubs     sync.Map
+	catalogueStubs sync.Map
+	fleetStubs     sync.Map
+)
+
+func agentStubFor(t *testing.T, s *Server) *agentStub {
+	t.Helper()
+	stub, ok := agentStubs.Load(s)
+	if !ok {
+		t.Fatal("this server has no agent stub")
+	}
+	return stub.(*agentStub)
+}
+
+func catalogueStubFor(t *testing.T, s *Server) *catalogueStub {
+	t.Helper()
+	stub, ok := catalogueStubs.Load(s)
+	if !ok {
+		t.Fatal("this server has no catalogue stub")
+	}
+	return stub.(*catalogueStub)
+}
+
+func fleetStubFor(t *testing.T, s *Server) *fleetStub {
+	t.Helper()
+	stub, ok := fleetStubs.Load(s)
+	if !ok {
+		t.Fatal("this server has no fleet stub")
+	}
+	return stub.(*fleetStub)
 }
 
 // emptyAuthStub answers the two link reads with nothing linked. It is deliberately
@@ -138,76 +183,25 @@ func TestRestResolveUser_Existing(t *testing.T) {
 	}
 }
 
-func TestRestListUsers(t *testing.T) {
-	s := testServerMongo(t)
-	storetest.SeedUser(t, s.store, "user-1", "pro", 1)
-	storetest.SeedUser(t, s.store, "user-2", "free", 2)
+// The user list moved to nanoauth with the rest of the account surface (stage 1):
+// the bus serves neither `GET /api/v1/users` nor `/api/v1/user-accounts` any more,
+// so there is nothing here to assert. routes_test.go pins that they stay gone.
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-	rec := httptest.NewRecorder()
-
-	mux := http.NewServeMux()
-	s.registerRESTRoutes(mux)
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestRestListUsers_Empty(t *testing.T) {
-	s := testServerMongo(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-	rec := httptest.NewRecorder()
-
-	mux := http.NewServeMux()
-	s.registerRESTRoutes(mux)
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-}
-
-// seedAgent writes an agent straight into the store's MongoDB.
+// seedAgent puts one agent row where the bus now reads it: the portal's stub.
 //
-// The agent domain moved there, so a test that needs an agent to exist must put
-// one there: mocking SQL rows for it now mocks a query nobody runs.
+// The rows are the portal's, so a test that needs an agent to exist seeds the
+// answer the portal would give — not a collection the bus no longer opens.
 func seedAgent(t *testing.T, s *Server, id, userID, status string) {
 	t.Helper()
-	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
-		{Key: "_id", Value: id},
-		{Key: "user_id", Value: userID},
-		{Key: "type_id", Value: "build"},
-		{Key: "display_name", Value: id},
-		{Key: "max_iterations", Value: 10},
-		{Key: "max_concurrent_messages", Value: 4},
-		{Key: "status", Value: status},
-		{Key: "created_at", Value: now},
-		{Key: "updated_at", Value: now},
-	}); err != nil {
-		t.Fatalf("seed agent %s: %v", id, err)
-	}
+	seedAgentNamed(t, s, id, userID, status, id)
 }
 
-// seedAgentNamed writes an agent with a specific display name, for the tests that
-// exercise the name-uniqueness rule.
 func seedAgentNamed(t *testing.T, s *Server, id, userID, status, displayName string) {
 	t.Helper()
-	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
-		{Key: "_id", Value: id},
-		{Key: "user_id", Value: userID},
-		{Key: "type_id", Value: "build"},
-		{Key: "display_name", Value: displayName},
-		{Key: "status", Value: status},
-		{Key: "max_iterations", Value: 10},
-		{Key: "max_concurrent_messages", Value: 4},
-		{Key: "created_at", Value: now},
-		{Key: "updated_at", Value: now},
-	}); err != nil {
-		t.Fatalf("seed agent %s: %v", id, err)
-	}
+	agentStubFor(t, s).put(portalagents.Agent{
+		ID: id, UserID: userID, TypeID: "build",
+		DisplayName: displayName, Status: status,
+		SessionAgents: []string{"build", "plan"}, DefaultAgent: "build",
+		MaxIterations: 10,
+	})
 }

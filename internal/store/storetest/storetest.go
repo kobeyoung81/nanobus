@@ -183,23 +183,3 @@ func SeedUserChannel(t *testing.T, s *store.Store, userID, tier, channel, sender
 		t.Fatalf("seed user %s: %v", userID, err)
 	}
 }
-
-// SeedAgents inserts agent documents so a query that reads agent ids out of
-// MongoDB has something to find.
-func SeedAgents(t *testing.T, s *store.Store, userID string, ids ...string) {
-	t.Helper()
-	now := time.Now().UTC()
-	for _, id := range ids {
-		if _, err := s.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
-			{Key: "_id", Value: id},
-			{Key: "user_id", Value: userID},
-			{Key: "type_id", Value: "build"},
-			{Key: "display_name", Value: id},
-			{Key: "status", Value: "active"},
-			{Key: "created_at", Value: now},
-			{Key: "updated_at", Value: now},
-		}); err != nil {
-			t.Fatalf("seed agent %s: %v", id, err)
-		}
-	}
-}

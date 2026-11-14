@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
-
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanobus/internal/voice"
+	"gitee.com/kobeyoung81/nanoprotocol"
 	"github.com/gorilla/websocket"
 )
 
@@ -65,45 +64,22 @@ func seedVoiceConfigItems(t *testing.T, s *Server, items []store.ConfigItem) {
 	}
 }
 
-// seedProvider and seedChatModel write the model catalog into the store the
-// server reads: seeding real documents is what makes an endpoint's answer depend
-// on data rather than on a mock agreeing with the code.
+// seedProvider and seedChatModel seed the catalogue's stub. The catalogue is the
+// admin module's: seeding real documents in its collections here would test a read
+// the bus no longer performs.
 func seedProvider(t *testing.T, s *Server, id int64, scope, name, baseURL, apiKey string) {
 	t.Helper()
-	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("admin_model_providers").InsertOne(context.Background(), bson.D{
-		{Key: "_id", Value: id},
-		{Key: "scope", Value: scope},
-		{Key: "owner_user_id", Value: ""},
-		{Key: "name", Value: name},
-		{Key: "kind", Value: "openai"},
-		{Key: "base_url", Value: baseURL},
-		{Key: "api_key", Value: apiKey},
-		{Key: "created_at", Value: now},
-		{Key: "updated_at", Value: now},
-	}); err != nil {
-		t.Fatalf("seed provider %d: %v", id, err)
-	}
+	catalogueStubFor(t, s).putProvider(nanoprotocol.ModelProviderDef{
+		ID: id, Scope: scope, Name: name, Kind: "openai", BaseURL: baseURL, APIKey: apiKey,
+	})
 }
 
 func seedChatModel(t *testing.T, s *Server, id, providerID int64, name, model string) {
 	t.Helper()
-	now := time.Now().UTC()
-	if _, err := s.store.DB().Collection("admin_models").InsertOne(context.Background(), bson.D{
-		{Key: "_id", Value: id},
-		{Key: "provider_id", Value: providerID},
-		{Key: "scope", Value: "platform"},
-		{Key: "owner_user_id", Value: ""},
-		{Key: "name", Value: name},
-		{Key: "model", Value: model},
-		{Key: "context_window", Value: 128000},
-		{Key: "max_output_tokens", Value: 4096},
-		{Key: "thinking_enabled", Value: false},
-		{Key: "created_at", Value: now},
-		{Key: "updated_at", Value: now},
-	}); err != nil {
-		t.Fatalf("seed model %d: %v", id, err)
-	}
+	catalogueStubFor(t, s).putModel(nanoprotocol.ModelDef{
+		ID: id, ProviderID: providerID, Scope: "platform", Name: name, Model: model,
+		ContextWindow: 128000, MaxOutputTokens: 4096,
+	})
 }
 
 func voiceRequest(t *testing.T, s *Server, method, target string, body []byte, contentType string) *httptest.ResponseRecorder {
@@ -272,10 +248,13 @@ func TestRestVoiceSession_MintsOneTimeID(t *testing.T) {
 	if payload.SessionID == "" || payload.WSPath != "/ws/voice" || payload.MaxSeconds != 90 {
 		t.Fatalf("payload = %+v", payload)
 	}
-	if userID, ok := s.voiceSessions.Claim(payload.SessionID); !ok || userID != "user-1" {
+	// The id is minted into the database when one is configured, so that any
+	// replica can claim it; claim through the same path the socket uses.
+	ctx := context.Background()
+	if userID, ok := s.claimVoiceSession(ctx, payload.SessionID); !ok || userID != "user-1" {
 		t.Fatalf("the minted id must be claimable by user-1, got (%q, %v)", userID, ok)
 	}
-	if _, ok := s.voiceSessions.Claim(payload.SessionID); ok {
+	if _, ok := s.claimVoiceSession(ctx, payload.SessionID); ok {
 		t.Fatal("the id must be single use")
 	}
 }
@@ -560,7 +539,7 @@ func TestHandleVoiceWS_RelaysAudioAndEvents(t *testing.T) {
 	busSrv := httptest.NewServer(mux)
 	defer busSrv.Close()
 
-	id, err := s.voiceSessions.Mint("user-1")
+	id, err := s.mintVoiceSession(context.Background(), "user-1")
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}

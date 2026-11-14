@@ -1,30 +1,66 @@
 package store
 
+// The bus's collections are its own.
+//
+// Every other domain moved out: the catalogue is the admin module's, the agent
+// rows and the conversations are the portal's, the queue and the runner registry
+// are the provisioner's, the accounts are the auth service's. What is left here is
+// bus_* (the two queues, the voice sessions, the WeChat KF cursor, the stream and
+// platform event logs) and sys_* (the counters and the migration log).
+//
+// Two lines keep it that way: the names carry their writer's prefix, and a store
+// file that spells another module's collection fails the build instead of quietly
+// reading rows it does not own.
+
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"gitee.com/kobeyoung81/nanobus/internal/stream"
 	migrationsmongo "gitee.com/kobeyoung81/nanobus/migrations-mongo"
 )
 
-// The prefix is the writer boundary: one collection, one writer, and the name
-// says which module that is. A collection that loses its prefix looks like it
-// belongs to nobody, and the next module to need it would write it too.
 func TestCollectionNamesCarryTheirModulePrefix(t *testing.T) {
 	owned := map[string][]string{
-		// No auth_ collection is written here any more: the account domain moved
-		// to the auth service, which is where those names are asserted now.
-		"admin_":       {agentTypesCollection, agentTypeOverridesCollection, modelsCollection, modelProvidersCollection, builtinToolsCollection, mcpServersCollection, skillsCollection, userSkillAcksCollection, sessionHeadPromptsCollection},
-		"portal_":      {agentsCollection, agentGroupsCollection, bindingAgentsCollection},
-		"bus_":         {inboundQueueCollection, outboundQueueCollection, wechatKFSyncStateCollection},
-		"provisioner_": {containerRequestsCollection, runnersCollection},
-		"sys_":         {countersCollection, migrationsCollection},
+		"bus_": {
+			inboundQueueCollection, outboundQueueCollection, wechatKFSyncStateCollection,
+			VoiceSessionsCollection, stream.EventsCollection, stream.PlatformEventsCollection,
+		},
+		"sys_": {countersCollection, migrationsCollection},
 	}
 	for prefix, names := range owned {
 		for _, name := range names {
 			if !strings.HasPrefix(name, prefix) {
 				t.Errorf("%q does not start with %q", name, prefix)
+			}
+		}
+	}
+}
+
+// TestStoreNamesOnlyItsOwnCollections is the line that keeps a store file from
+// reading another module's rows. It scans the package's own sources, so a new
+// helper that reaches for admin_agent_types fails here rather than in production.
+func TestStoreNamesOnlyItsOwnCollections(t *testing.T) {
+	foreign := []string{`"admin_`, `"portal_`, `"provisioner_`, `"auth_`, `"workspace_`}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		text := string(raw)
+		for _, prefix := range foreign {
+			if strings.Contains(text, prefix) {
+				t.Errorf("%s names another module's collection (%s…): the bus asks its owner instead of reading its rows", file, strings.TrimPrefix(prefix, `"`))
 			}
 		}
 	}
@@ -38,7 +74,6 @@ func TestMigrationManifestsUsePrefixedCollections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load manifests: %v", err)
 	}
-	prefixes := []string{"auth_", "admin_", "portal_", "bus_", "provisioner_", "sys_"}
 	for name, body := range manifests {
 		var manifest struct {
 			Collections map[string]json.RawMessage `json:"collections"`
@@ -47,15 +82,8 @@ func TestMigrationManifestsUsePrefixedCollections(t *testing.T) {
 			t.Fatalf("%s: parse: %v", name, err)
 		}
 		for collection := range manifest.Collections {
-			found := false
-			for _, prefix := range prefixes {
-				if strings.HasPrefix(collection, prefix) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("%s: collection %q has no module prefix", name, collection)
+			if !strings.HasPrefix(collection, "bus_") && !strings.HasPrefix(collection, "sys_") {
+				t.Errorf("%s: collection %q is not one of the bus's", name, collection)
 			}
 		}
 	}

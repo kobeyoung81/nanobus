@@ -194,3 +194,58 @@ func TestRestSetAgentPermissions_PassesARejectionThrough(t *testing.T) {
 		t.Fatalf("the refusal lost its reason: %s", rec.Body.String())
 	}
 }
+
+func putCapability(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut,
+		"/api/v1/user/capabilities/agents/agent-1?user_id=user-1", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	restMux(t, s).ServeHTTP(rec, req)
+	return rec
+}
+
+// TestRestSetAgentCapability_AsksTheCatalogueOwnerWhetherItIsVisible: visibility is
+// the catalogue's rule — platform-wide items belong to everybody and a user's own
+// to that user — so the bus asks before it writes. This used to be a local read of
+// the catalogue's collections.
+func TestRestSetAgentCapability_AsksTheCatalogueOwnerWhetherItIsVisible(t *testing.T) {
+	s := testServerMongo(t)
+	seedAgent(t, s, "agent-1", "user-1", "active")
+	var calls []forwardedCall
+	s.admin = adminRecorder(t, &calls, http.StatusOK)
+
+	// Not visible: the write is refused and never forwarded.
+	rec := putCapability(t, s, `{"kind":"mcp","ref":"mcp-1","enabled":true}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(calls) != 0 {
+		t.Fatalf("an invisible capability was forwarded: %+v", calls)
+	}
+
+	// Visible: forwarded once, with the agent's default mode filled in.
+	catalogueStubFor(t, s).allowVisible("mcp", "mcp-1")
+	rec = putCapability(t, s, `{"kind":"mcp","ref":"mcp-1","enabled":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var write *forwardedCall
+	for i := range calls {
+		if strings.HasSuffix(calls[i].path, "/capabilities") {
+			write = &calls[i]
+		}
+	}
+	if write == nil {
+		t.Fatalf("the capable write was not forwarded: %+v", calls)
+	}
+	var body struct {
+		TypeID  string `json:"type_id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.Unmarshal([]byte(write.body), &body); err != nil {
+		t.Fatalf("decode forwarded body: %v", err)
+	}
+	if body.TypeID != "build" || !body.Enabled {
+		t.Fatalf("the write did not carry the default mode: %+v", body)
+	}
+}

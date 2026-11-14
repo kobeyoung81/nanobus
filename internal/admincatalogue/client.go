@@ -206,3 +206,30 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
+
+// DefaultModel answers the model one agent's default mode runs with.
+func (c *Client) DefaultModel(ctx context.Context, in RuntimeInput) (int64, string, error) {
+	var out struct {
+		ModelID   int64  `json:"model_id"`
+		ModelName string `json:"model_name"`
+	}
+	if err := c.post(ctx, "/api/v1/internal/agent-default-model", in, &out); err != nil {
+		return 0, "", err
+	}
+	return out.ModelID, out.ModelName, nil
+}
+
+// CapabilityVisible answers whether one catalogue item is visible to a user.
+func (c *Client) CapabilityVisible(ctx context.Context, kind, ref, userID string) (bool, error) {
+	query := url.Values{}
+	query.Set("kind", kind)
+	query.Set("ref", ref)
+	query.Set("user_id", userID)
+	var out struct {
+		Visible bool `json:"visible"`
+	}
+	if err := c.get(ctx, "/api/v1/internal/capability-visible?"+query.Encode(), &out); err != nil {
+		return false, err
+	}
+	return out.Visible, nil
+}

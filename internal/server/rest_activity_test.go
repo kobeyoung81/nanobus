@@ -15,30 +15,15 @@ import (
 // bus's now.
 
 // TestRestListAgentFleet is the runtime snapshot's agent list: everybody's agents,
-// newest first, each with its owner.
+// each with its owner. The rows are the portal's, so the stub answers them.
 func TestRestListAgentFleet(t *testing.T) {
 	srv := testServerMongo(t)
+	seedAgentNamed(t, srv, "agent-1", "u-1", "running", "agent-1")
+	seedAgentNamed(t, srv, "agent-2", "u-2", "running", "agent-2")
+	// The newer one sorts first: agent-1 was touched an hour ago.
 	base := time.Now().UTC()
-	for _, a := range []struct{ id, user string }{{"agent-1", "u-1"}, {"agent-2", "u-2"}} {
-		if _, err := srv.store.DB().Collection("portal_agents").InsertOne(context.Background(), bson.D{
-			{Key: "_id", Value: a.id},
-			{Key: "user_id", Value: a.user},
-			{Key: "type_id", Value: "build"},
-			{Key: "display_name", Value: a.id},
-			{Key: "status", Value: "running"},
-			{Key: "created_at", Value: base.Add(-2 * time.Hour)},
-			{Key: "updated_at", Value: base.Add(-time.Hour)},
-		}); err != nil {
-			t.Fatalf("seed agent %s: %v", a.id, err)
-		}
-	}
-	// The newer one sorts first.
-	if _, err := srv.store.DB().Collection("portal_agents").UpdateOne(context.Background(),
-		bson.D{{Key: "_id", Value: "agent-2"}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "updated_at", Value: base}}}},
-	); err != nil {
-		t.Fatalf("touch agent-2: %v", err)
-	}
+	agentStubFor(t, srv).touch("agent-1", base.Add(-time.Hour))
+	agentStubFor(t, srv).touch("agent-2", base)
 
 	rec := accountRequest(t, srv, http.MethodGet, "/api/v1/agent-fleet?limit=10", nil)
 	if rec.Code != http.StatusOK {

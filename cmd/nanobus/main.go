@@ -12,7 +12,6 @@ import (
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/config"
 	buslog "gitee.com/kobeyoung81/nanobus/internal/log"
-	"gitee.com/kobeyoung81/nanobus/internal/portalagents"
 	"gitee.com/kobeyoung81/nanobus/internal/portalclient"
 	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanobus/internal/server"
@@ -64,19 +63,16 @@ for gateway and agent connections.`,
 			// container: the rows are the portal's, and a container with no agent
 			// answers nothing.
 			s.SetAgentEnsurer(portalclient.New(cfg.Portal.BaseURL, cfg.InternalToken))
-			// The agent rows are the portal's too: the bus reads one when it answers
-			// "who owns this agent" or assembles a start snapshot. An unset base URL
-			// keeps the bus's own read (the rolling-upgrade switch).
-			s.SetAgentSource(agentSourceClient(cfg))
 
 			srv := server.NewServer(s,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
 				server.WithAuthURL(cfg.Nanoauth.BaseURL, cfg.InternalToken),
 				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
-				// The catalogue's owner answers the resolution; NANOSEC_BUS_CATALOGUE_SOURCE=mongo
-				// keeps the bus's own read for a rolling upgrade.
-				server.WithAdminCatalogue(catalogueBaseURL(cfg), cfg.InternalToken),
-				server.WithAgentSource(agentSourceBaseURL(cfg), cfg.InternalToken),
+				// The owners answer their own domains: the catalogue is the admin
+				// module's, the agent rows are the portal's, the fleet and the queue
+				// are the provisioner's.
+				server.WithAdminCatalogue(cfg.Admin.BaseURL, cfg.InternalToken),
+				server.WithAgentSource(cfg.Portal.BaseURL, cfg.InternalToken),
 				server.WithPortalURL(cfg.Portal.BaseURL, cfg.InternalToken),
 				server.WithProvisionerURL(cfg.Provisioner.BaseURL, cfg.InternalToken),
 				server.WithMaxContentBytes(cfg.Server.MaxContentBytes),
@@ -318,33 +314,4 @@ func newVersionCmd() *cobra.Command {
 			fmt.Printf("nanobus %s (commit: %s, built: %s)\n", version, commit, date)
 		},
 	}
-}
-
-// agentSourceBaseURL is where the bus reads agent rows for the console. Same
-// switch as the store's: unset means "read the collection yourself".
-func agentSourceBaseURL(cfg config.BusConfig) string {
-	if os.Getenv("NANOSEC_BUS_AGENT_SOURCE") == "mongo" {
-		return ""
-	}
-	return cfg.Portal.BaseURL
-}
-
-// agentSourceClient is where the bus reads an agent row. Same switch shape as the
-// catalogue: unset means "read the collection yourself", which is what a rolling
-// upgrade needs.
-func agentSourceClient(cfg config.BusConfig) *portalagents.Client {
-	if os.Getenv("NANOSEC_BUS_AGENT_SOURCE") == "mongo" {
-		return portalagents.New("", "")
-	}
-	return portalagents.New(cfg.Portal.BaseURL, cfg.InternalToken)
-}
-
-// catalogueBaseURL is where the bus asks for one agent's resolved catalogue. The
-// switch exists for the rolling upgrade in which the admin module still runs the
-// image from before the endpoint: the bus then reads the collections itself.
-func catalogueBaseURL(cfg config.BusConfig) string {
-	if os.Getenv("NANOSEC_BUS_CATALOGUE_SOURCE") == "mongo" {
-		return ""
-	}
-	return cfg.Admin.BaseURL
 }

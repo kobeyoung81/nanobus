@@ -179,9 +179,12 @@ type RunnerSummary struct {
 type ContainerSummary struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
+	AgentID   string    `json:"agent_id,omitempty"`
+	BindingID int64     `json:"binding_id,omitempty"`
 	Level     string    `json:"level"`
 	Status    string    `json:"status"`
 	RunnerID  string    `json:"runner_id"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 

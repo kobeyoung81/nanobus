@@ -223,7 +223,7 @@ func (s *Server) handleListContainers(msg nanoprotocol.Message) *nanoprotocol.Me
 		return &resp
 	}
 
-	requests, err := s.store.ListContainers(req.UserID, req.Limit)
+	requests, err := s.lookupContainerRequests(context.Background(), req.UserID, req.Limit)
 	if err != nil {
 		slog.Error("list containers failed", "user_id", req.UserID, "error", err)
 		resp := nanoprotocol.NewErrorMessage("list containers: " + err.Error())
@@ -367,13 +367,9 @@ func (s *Server) handleGetAgentSnapshot(msg nanoprotocol.Message) *nanoprotocol.
 		resp := nanoprotocol.NewErrorMessage("agent_id is required")
 		return &resp
 	}
-	agent, err := s.store.GetAgent(req.AgentID)
+	agent, err := s.lookupAgent(req.AgentID)
 	if err != nil {
 		resp := nanoprotocol.NewErrorMessage("get agent: " + err.Error())
-		return &resp
-	}
-	if agent == nil {
-		resp := nanoprotocol.NewErrorMessage("agent not found: " + req.AgentID)
 		return &resp
 	}
 	resolution, err := s.resolveRuntime(*agent)

@@ -32,6 +32,7 @@ type Agent struct {
 	SessionAgents []string          `json:"session_agents"`
 	DefaultAgent  string            `json:"default_agent"`
 	Settings      map[string]string `json:"settings"`
+	Thinking      string            `json:"thinking"`
 	MaxIterations int               `json:"max_iterations"`
 	Status        string            `json:"status"`
 }
@@ -43,8 +44,8 @@ type Client struct {
 	http    *http.Client
 }
 
-// New builds the client. An empty base URL disables it: the caller keeps its own
-// read, which is the switch a rolling upgrade needs.
+// New builds the client. An empty base URL leaves it unconfigured: every call then
+// fails loudly, because the bus has no other way to answer.
 func New(baseURL, token string) *Client {
 	return &Client{baseURL: baseURL, token: token, http: &http.Client{Timeout: 15 * time.Second}}
 }

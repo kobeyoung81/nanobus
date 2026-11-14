@@ -92,6 +92,6 @@ func (s *Server) restSetAgentMode(w http.ResponseWriter, r *http.Request) {
 
 // agentOwnedBy reports whether the agent exists and belongs to the user.
 func (s *Server) agentOwnedBy(agentID, userID string) bool {
-	owner, err := s.store.AgentOwner(agentID)
-	return err == nil && owner == userID
+	agent, err := s.lookupAgent(agentID)
+	return err == nil && agent.UserID == userID
 }

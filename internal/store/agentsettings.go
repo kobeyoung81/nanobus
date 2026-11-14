@@ -2,64 +2,11 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
-
-// EffectiveAgentSettings resolves the runtime settings for an agent's primary
-// type: the AgentType baseline overlaid by the user's per-(agent, type)
-// override. Empty values are dropped so the runtime falls back to its code
-// defaults. Non-default modes are applied per turn from each definition.
-func (s *Store) EffectiveAgentSettings(agentID string) (map[string]string, error) {
-	out := map[string]string{}
-
-	agent, err := s.GetAgent(agentID)
-	if err != nil {
-		return nil, fmt.Errorf("effective agent settings: %w", err)
-	}
-	if agent == nil {
-		return out, nil
-	}
-	typeID := agent.TypeID
-	if typeID == "" {
-		typeID = "build"
-	}
-
-	// Two steps rather than one join: the type baseline and the user's override
-	// are separate collections, as they were separate tables.
-	//
-	// A missing type yields no settings *and* drops the override, which is what
-	// the LEFT JOIN did when its driving row was absent.
-	t, err := s.GetAgentType(typeID)
-	if err != nil {
-		return nil, fmt.Errorf("effective agent settings: %w", err)
-	}
-	if t == nil {
-		return out, nil
-	}
-	ov, err := s.GetAgentTypeOverride(agentID, typeID)
-	if err != nil {
-		return nil, fmt.Errorf("effective agent settings: %w", err)
-	}
-
-	// Empty values are dropped at each layer so the runtime falls back to its
-	// code defaults, and the override is applied second so it wins.
-	merge := func(m map[string]string) {
-		for k, v := range m {
-			if v != "" {
-				out[k] = v
-			}
-		}
-	}
-	merge(t.Settings)
-	if ov != nil {
-		merge(ov.Settings)
-	}
-	return out, nil
-}
 
 // ErrUnsupportedAgentSetting reports a settings key or value the platform does
 // not accept from a client.
