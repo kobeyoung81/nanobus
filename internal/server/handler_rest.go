@@ -114,6 +114,14 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 
 	// Capability catalog: user-scoped library + per-agent settings
 	// Per-(agent, mode) override config (model/thinking/settings).
+	// The per-agent capability editor. These four stayed when the catalogue
+	// forwarders left: they resolve the catalogue *for one agent*, which is the
+	// runtime's question, not the console's catalogue management.
+	mux.HandleFunc("GET /api/v1/user/capabilities/agents/{agentID}", s.restAgentCapabilities)
+	mux.HandleFunc("PUT /api/v1/user/capabilities/agents/{agentID}", s.restSetAgentCapability)
+	mux.HandleFunc("DELETE /api/v1/user/capabilities/agents/{agentID}", s.restDeleteAgentCapability)
+	mux.HandleFunc("PUT /api/v1/user/capabilities/agents/{agentID}/permissions", s.restSetAgentPermissions)
+
 	mux.HandleFunc("GET /api/v1/user/agents/{agentID}/modes/{typeID}", s.restGetAgentMode)
 	mux.HandleFunc("PUT /api/v1/user/agents/{agentID}/modes/{typeID}", s.restSetAgentMode)
 

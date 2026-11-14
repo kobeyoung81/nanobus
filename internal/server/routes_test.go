@@ -175,3 +175,30 @@ func TestBusDoesNotDriveTheContainerLifecycle(t *testing.T) {
 		}
 	}
 }
+
+// TestPerAgentCapabilityRoutesStay: the per-agent capability editor is a different
+// question from the catalogue the console manages, and an earlier cleanup answered
+// both as "the catalogue moved" — it deleted these four along with the forwarders and
+// the page started returning 400. The distinction is what this pins: the per-agent
+// routes resolve the catalogue for one agent, so they stay here.
+func TestPerAgentCapabilityRoutesStay(t *testing.T) {
+	s := NewServer(nil)
+	mux := http.NewServeMux()
+	s.registerRESTRoutes(mux)
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/user/capabilities/agents/agent-1"},
+		{http.MethodPut, "/api/v1/user/capabilities/agents/agent-1"},
+		{http.MethodDelete, "/api/v1/user/capabilities/agents/agent-1"},
+		{http.MethodPut, "/api/v1/user/capabilities/agents/agent-1/permissions"},
+	} {
+		req := httptest.NewRequest(route.method, route.path, strings.NewReader(`{"user_id":"u-1"}`))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		// A routed request reaches the handler, which answers with its own status.
+		// What it must never be is the mux's bare 400/404 for an unknown path.
+		if rec.Code == http.StatusNotFound || rec.Code == http.StatusMethodNotAllowed {
+			t.Errorf("%s %s is not routed: the per-agent capability editor lost its endpoint", route.method, route.path)
+		}
+	}
+}

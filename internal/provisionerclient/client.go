@@ -161,3 +161,104 @@ func CodeOf(err error) int {
 	}
 	return 0
 }
+
+// The console's reads. The queue and the runner registry are the provisioner's, so
+// these answer from it instead of the bus reading the collections.
+
+// RunnerSummary is one row of the fleet view.
+type RunnerSummary struct {
+	ID            string    `json:"id"`
+	Hostname      string    `json:"hostname"`
+	DockerHost    string    `json:"docker_host"`
+	Status        string    `json:"status"`
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+	RegisteredAt  time.Time `json:"registered_at"`
+}
+
+// ContainerSummary is one row of the container queue.
+type ContainerSummary struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Level     string    `json:"level"`
+	Status    string    `json:"status"`
+	RunnerID  string    `json:"runner_id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Runners answers the whole fleet.
+func (c *Client) Runners(ctx context.Context) ([]RunnerSummary, error) {
+	var out struct {
+		Runners []RunnerSummary `json:"runners"`
+	}
+	if err := c.get(ctx, "/api/v1/internal/console/runners", &out); err != nil {
+		return nil, err
+	}
+	return out.Runners, nil
+}
+
+// OnlineRunners answers the number the overview prints.
+func (c *Client) OnlineRunners(ctx context.Context) (int, error) {
+	var out struct {
+		Online int `json:"online"`
+	}
+	if err := c.get(ctx, "/api/v1/internal/console/runners/counts", &out); err != nil {
+		return 0, err
+	}
+	return out.Online, nil
+}
+
+// Containers answers the queue's rows.
+func (c *Client) Containers(ctx context.Context, userID string, limit int) ([]ContainerSummary, error) {
+	path := "/api/v1/internal/console/containers"
+	query := url.Values{}
+	if userID != "" {
+		query.Set("user_id", userID)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out struct {
+		Containers []ContainerSummary `json:"containers"`
+	}
+	if err := c.get(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return out.Containers, nil
+}
+
+// ContainerCounts answers the status buckets.
+func (c *Client) ContainerCounts(ctx context.Context) (map[string]int, error) {
+	var out struct {
+		ByStatus map[string]int `json:"by_status"`
+	}
+	if err := c.get(ctx, "/api/v1/internal/console/containers/counts", &out); err != nil {
+		return nil, err
+	}
+	return out.ByStatus, nil
+}
+
+func (c *Client) get(ctx context.Context, path string, out any) error {
+	if !c.Enabled() {
+		return fmt.Errorf("the provisioner module is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("call the provisioner %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return &StatusError{Code: resp.StatusCode, Body: strings.TrimSpace(string(detail))}
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}

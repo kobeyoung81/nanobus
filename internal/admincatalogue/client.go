@@ -122,6 +122,21 @@ func (c *Client) PromptBlocks(ctx context.Context, agentID string) (*PromptBlock
 	return &out, nil
 }
 
+// AgentTypes answers the type catalogue.
+func (c *Client) AgentTypes(ctx context.Context, sessionOnly bool) ([]nanoprotocol.AgentTypeDef, error) {
+	var out struct {
+		Types []nanoprotocol.AgentTypeDef `json:"types"`
+	}
+	path := "/api/v1/internal/agent-types"
+	if sessionOnly {
+		path += "?session_only=1"
+	}
+	if err := c.get(ctx, path, &out); err != nil {
+		return nil, err
+	}
+	return out.Types, nil
+}
+
 // AgentMode answers one (agent, mode): the baseline type and the user's override.
 type AgentMode struct {
 	Type     *nanoprotocol.AgentTypeDef      `json:"type"`

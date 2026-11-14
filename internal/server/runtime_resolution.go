@@ -14,8 +14,10 @@ package server
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/admincatalogue"
+	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
@@ -126,4 +128,148 @@ func (s *Server) lookupAgentMode(agentID, typeID string) (*admincatalogue.AgentM
 		return nil, err
 	}
 	return &admincatalogue.AgentMode{Type: at, Override: ov}, nil
+}
+
+// The console's fleet and queue reads. Each owner answers them now; the local read
+// stays behind the same kind of switch as the catalogue, so a rolling upgrade keeps
+// working while the other module still runs the previous image.
+
+// AgentFleetRow is one row of the console's fleet list.
+type AgentFleetRow struct {
+	ID          string
+	UserID      string
+	DisplayName string
+	Status      string
+	UpdatedAt   time.Time
+}
+
+func (s *Server) lookupAgentFleet(ctx context.Context, limit int) ([]AgentFleetRow, error) {
+	if s.agentSource == nil || !s.agentSource.Enabled() {
+		rows, err := s.store.ListAgentFleet(limit)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]AgentFleetRow, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, AgentFleetRow{ID: row.ID, UserID: row.UserID, DisplayName: row.DisplayName, Status: row.Status, UpdatedAt: row.UpdatedAt})
+		}
+		return out, nil
+	}
+	rows, err := s.agentSource.Fleet(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AgentFleetRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, AgentFleetRow{ID: row.ID, UserID: row.UserID, DisplayName: row.DisplayName, Status: row.Status, UpdatedAt: row.UpdatedAt})
+	}
+	return out, nil
+}
+
+func (s *Server) lookupRunners(ctx context.Context) ([]provisionerclient.RunnerSummary, error) {
+	if s.provisioner != nil && s.provisioner.Enabled() {
+		return s.provisioner.Runners(ctx)
+	}
+	rows, err := s.store.ListRunners()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provisionerclient.RunnerSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, provisionerclient.RunnerSummary{
+			ID: row.ID, Hostname: row.Hostname, DockerHost: row.DockerHost,
+			Status: row.Status, LastHeartbeat: row.LastHeartbeat, RegisteredAt: row.RegisteredAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *Server) lookupOnlineRunners(ctx context.Context) (int, error) {
+	if s.provisioner == nil || !s.provisioner.Enabled() {
+		return s.store.CountOnlineRunners()
+	}
+	return s.provisioner.OnlineRunners(ctx)
+}
+
+func (s *Server) lookupContainers(ctx context.Context, userID string, limit int) ([]store.ContainerSummary, error) {
+	if s.provisioner == nil || !s.provisioner.Enabled() {
+		return s.store.ListContainerSummaries(userID, limit)
+	}
+	rows, err := s.provisioner.Containers(ctx, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.ContainerSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, store.ContainerSummary{
+			ID: row.ID, UserID: row.UserID, Level: row.Level, Status: row.Status,
+			RunnerID: row.RunnerID, UpdatedAt: row.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *Server) lookupContainerCounts(ctx context.Context) (map[string]int, error) {
+	if s.provisioner == nil || !s.provisioner.Enabled() {
+		return s.store.CountContainersByStatus()
+	}
+	return s.provisioner.ContainerCounts(ctx)
+}
+
+// lookupAgentTypes answers the type catalogue. It used to be a read of
+// admin_agent_types here.
+func (s *Server) lookupAgentTypes(sessionOnly bool) ([]nanoprotocol.AgentTypeDef, error) {
+	if s.catalogue != nil && s.catalogue.Enabled() {
+		return s.catalogue.AgentTypes(context.Background(), sessionOnly)
+	}
+	return s.store.ListAgentTypes(sessionOnly)
+}
+
+// resolveModeCapabilities answers one (agent, mode) catalogue snapshot.
+func (s *Server) resolveModeCapabilities(agentID, userID, typeID string) (*nanoprotocol.CapabilitiesResponse, error) {
+	if s.catalogue != nil && s.catalogue.Enabled() {
+		return s.catalogue.ModeCapabilities(context.Background(), agentID, userID, typeID)
+	}
+	return s.store.ResolveModeCapabilities(agentID, typeID)
+}
+
+// capabilityVisible reports whether a capability is visible to a user. The
+// catalogues are the admin module's; until it answers this question over its API,
+// the bus reads them — the one foreign read left on a write path.
+func (s *Server) capabilityVisible(kind, ref, userID string) (bool, error) {
+	return s.store.CapabilityVisible(kind, ref, userID)
+}
+
+// lookupDefaultModeModel answers the model one agent's default mode runs with.
+func (s *Server) lookupDefaultModeModel(agentID string) (int64, string) {
+	return s.store.DefaultModeModel(agentID)
+}
+
+// localPromptBlocks is the bus's own answer to the user-facing prompt-block view,
+// kept for the rolling upgrade: the platform head, the agent's own head, and the
+// two mode notes.
+func (s *Server) localPromptBlocks(agentID string) (head, source string, notes map[string]string, err error) {
+	platform, err := s.store.PlatformSessionHead()
+	if err != nil {
+		return "", "", nil, err
+	}
+	own, err := s.store.AgentSessionHead(agentID)
+	if err != nil {
+		return "", "", nil, err
+	}
+	head, source = platform.Content, "platform"
+	if own != nil && own.Content != "" {
+		head, source = own.Content, "agent"
+	}
+	notes = make(map[string]string, len(modeNoteIDs))
+	for _, id := range modeNoteIDs {
+		t, err := s.store.GetAgentType(id)
+		if err != nil {
+			return "", "", nil, err
+		}
+		if t != nil {
+			notes[id] = t.Prompt
+		}
+	}
+	return head, source, notes, nil
 }

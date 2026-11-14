@@ -61,7 +61,7 @@ func (s *Server) restAgentCapabilities(w http.ResponseWriter, r *http.Request) {
 	if typeID == "" {
 		typeID = s.store.DefaultModeTypeID(agentID)
 	}
-	resp, err := s.store.ResolveModeCapabilities(agentID, typeID)
+	resp, err := s.resolveModeCapabilities(agentID, userID, typeID)
 	if err != nil {
 		slog.Error("resolve capabilities", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -230,7 +230,7 @@ func (s *Server) restSetAgentCapability(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind and ref are required"})
 		return
 	}
-	visible, err := s.store.CapabilityVisible(body.Kind, body.Ref, userID)
+	visible, err := s.capabilityVisible(body.Kind, body.Ref, userID)
 	if err != nil || !visible {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "capability not found or not visible"})
 		return

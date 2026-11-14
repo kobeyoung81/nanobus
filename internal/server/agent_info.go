@@ -28,7 +28,7 @@ func (s *Server) agentInfo(a store.AgentRecord) nanoprotocol.AgentInfo {
 	// The effective model is resolved per (agent, mode). Surface the default
 	// mode's resolved model so list/detail views can display it without a second
 	// round-trip.
-	modelID, _ := s.store.DefaultModeModel(a.ID)
+	modelID, _ := s.lookupDefaultModeModel(a.ID)
 	modelName := ""
 	if m, err := s.lookupModel(modelID); err == nil && m != nil {
 		modelName = m.Name

@@ -44,7 +44,7 @@ func writeAdminFailure(w http.ResponseWriter, err error) {
 func (s *Server) handleListAgentTypes(msg nanoprotocol.Message) *nanoprotocol.Message {
 	var req nanoprotocol.ListAgentTypesRequest
 	_ = msg.DecodePayload(&req)
-	types, err := s.store.ListAgentTypes(req.SessionOnly)
+	types, err := s.lookupAgentTypes(req.SessionOnly)
 	if err != nil {
 		resp := nanoprotocol.NewErrorMessage("list agent types: " + err.Error())
 		return &resp

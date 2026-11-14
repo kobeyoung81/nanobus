@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -50,6 +51,49 @@ func New(baseURL, token string) *Client {
 
 // Enabled reports whether a base URL was configured.
 func (c *Client) Enabled() bool { return c != nil && c.baseURL != "" }
+
+// FleetRow is one row of the console's fleet list.
+type FleetRow struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	DisplayName string    `json:"display_name"`
+	Status      string    `json:"status"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// Fleet answers every agent on the platform, newest first.
+func (c *Client) Fleet(ctx context.Context, limit int) ([]FleetRow, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("the portal is not configured")
+	}
+	path := "/internal/v1/agents-fleet"
+	if limit > 0 {
+		path += "?limit=" + url.QueryEscape(strconv.Itoa(limit))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("call portal %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= http.StatusBadRequest {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("call portal %s: status %d: %s", path, resp.StatusCode, bytes.TrimSpace(detail))
+	}
+	var payload struct {
+		Agents []FleetRow `json:"agents"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode fleet: %w", err)
+	}
+	return payload.Agents, nil
+}
 
 // GetAgent returns one row, or nil when there is none.
 func (c *Client) GetAgent(ctx context.Context, agentID string) (*Agent, error) {

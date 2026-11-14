@@ -16,7 +16,7 @@ import (
 // prints.
 
 func (s *Server) restListRunners(w http.ResponseWriter, r *http.Request) {
-	runners, err := s.store.ListRunners()
+	runners, err := s.lookupRunners(r.Context())
 	if err != nil {
 		slog.Error("list runners", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -38,7 +38,7 @@ func (s *Server) restListRunners(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) restCountRunners(w http.ResponseWriter, r *http.Request) {
-	online, err := s.store.CountOnlineRunners()
+	online, err := s.lookupOnlineRunners(r.Context())
 	if err != nil {
 		slog.Error("count online runners", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -51,7 +51,7 @@ func (s *Server) restListContainerRequests(w http.ResponseWriter, r *http.Reques
 	userID := r.URL.Query().Get("user_id")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 
-	containers, err := s.store.ListContainerSummaries(userID, limit)
+	containers, err := s.lookupContainers(r.Context(), userID, limit)
 	if err != nil {
 		slog.Error("list containers", "user_id", userID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -76,7 +76,7 @@ func (s *Server) restListContainerRequests(w http.ResponseWriter, r *http.Reques
 // number per view: "active" is a sum of statuses that the caller decides, so a new
 // status does not need a new endpoint.
 func (s *Server) restCountContainerRequests(w http.ResponseWriter, r *http.Request) {
-	byStatus, err := s.store.CountContainersByStatus()
+	byStatus, err := s.lookupContainerCounts(r.Context())
 	if err != nil {
 		slog.Error("count containers", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})

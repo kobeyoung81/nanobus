@@ -76,6 +76,7 @@ for gateway and agent connections.`,
 				// The catalogue's owner answers the resolution; NANOSEC_BUS_CATALOGUE_SOURCE=mongo
 				// keeps the bus's own read for a rolling upgrade.
 				server.WithAdminCatalogue(catalogueBaseURL(cfg), cfg.InternalToken),
+				server.WithAgentSource(agentSourceBaseURL(cfg), cfg.InternalToken),
 				server.WithPortalURL(cfg.Portal.BaseURL, cfg.InternalToken),
 				server.WithProvisionerURL(cfg.Provisioner.BaseURL, cfg.InternalToken),
 				server.WithMaxContentBytes(cfg.Server.MaxContentBytes),
@@ -317,6 +318,15 @@ func newVersionCmd() *cobra.Command {
 			fmt.Printf("nanobus %s (commit: %s, built: %s)\n", version, commit, date)
 		},
 	}
+}
+
+// agentSourceBaseURL is where the bus reads agent rows for the console. Same
+// switch as the store's: unset means "read the collection yourself".
+func agentSourceBaseURL(cfg config.BusConfig) string {
+	if os.Getenv("NANOSEC_BUS_AGENT_SOURCE") == "mongo" {
+		return ""
+	}
+	return cfg.Portal.BaseURL
 }
 
 // agentSourceClient is where the bus reads an agent row. Same switch shape as the

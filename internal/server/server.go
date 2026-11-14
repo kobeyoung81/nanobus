@@ -17,6 +17,7 @@ import (
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/metrics"
 	"gitee.com/kobeyoung81/nanobus/internal/middleware"
+	"gitee.com/kobeyoung81/nanobus/internal/portalagents"
 	"gitee.com/kobeyoung81/nanobus/internal/portalclient"
 	"gitee.com/kobeyoung81/nanobus/internal/provisionerclient"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
@@ -36,7 +37,10 @@ type Server struct {
 	// catalogue resolves one agent's runtime from the admin module's collections
 	// over HTTP. Nil (or disabled) keeps the bus's own resolution, which is the
 	// rollback switch for a rolling upgrade.
-	catalogue   *admincatalogue.Client
+	catalogue *admincatalogue.Client
+	// agentSource reads agent rows from the portal: the fleet list and the per-row
+	// facts the snapshot needs. Nil keeps the bus's own read.
+	agentSource *portalagents.Client
 	portal      *portalclient.Client
 	provisioner *provisionerclient.Client
 	chunks      *stream.ChunkBuffer
@@ -128,6 +132,14 @@ func WithNanoauthURL(url string) ServerOption {
 func WithAuthURL(url, token string) ServerOption {
 	return func(s *Server) {
 		s.auth = authclient.New(url, token)
+	}
+}
+
+// WithAgentSource attaches the portal's internal agent read. Without it the bus
+// keeps reading the collection — the switch a rolling upgrade needs.
+func WithAgentSource(baseURL, token string) ServerOption {
+	return func(s *Server) {
+		s.agentSource = portalagents.New(baseURL, token)
 	}
 }
 

@@ -12,23 +12,6 @@ import (
 // modeNoteIDs are the session types whose prompt is a mode switch note.
 var modeNoteIDs = []string{"plan", "build"}
 
-// modeNotes reads the two mode switch notes. They are edited on the agent type
-// (the admin module owns that write), so this service only reads them — the user
-// plane shows an agent's effective prompt blocks.
-func (s *Server) modeNotes() (map[string]string, error) {
-	notes := make(map[string]string, len(modeNoteIDs))
-	for _, id := range modeNoteIDs {
-		t, err := s.store.GetAgentType(id)
-		if err != nil {
-			return nil, err
-		}
-		if t != nil {
-			notes[id] = t.Prompt
-		}
-	}
-	return notes, nil
-}
-
 // restGetAgentPromptBlocks (user plane, read-only) resolves what one agent actually
 // runs with: the effective shared head (its own override when one exists, else the
 // platform's) and the two mode notes.
@@ -58,25 +41,9 @@ func (s *Server) restGetAgentPromptBlocks(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	platform, err := s.store.PlatformSessionHead()
+	head, source, notes, err := s.localPromptBlocks(agentID)
 	if err != nil {
-		slog.Error("get session head prompt", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	own, err := s.store.AgentSessionHead(agentID)
-	if err != nil {
-		slog.Error("get agent session head prompt", "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
-	head, source := platform, "platform"
-	if own != nil && own.Content != "" {
-		head, source = own, "agent"
-	}
-	notes, err := s.modeNotes()
-	if err != nil {
-		slog.Error("get mode notes", "error", err)
+		slog.Error("get prompt blocks locally", "agent_id", agentID, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}

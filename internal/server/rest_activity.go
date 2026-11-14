@@ -15,7 +15,7 @@ import (
 // owner: the snapshot shows the whole fleet, not one user's slice.
 func (s *Server) restListAgentFleet(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	agents, err := s.store.ListAgentFleet(limit)
+	agents, err := s.lookupAgentFleet(r.Context(), limit)
 	if err != nil {
 		slog.Error("list agent fleet", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
