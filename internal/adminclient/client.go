@@ -113,6 +113,12 @@ func (c *Client) PutJSONPath(ctx context.Context, path string, body []byte) (int
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// The token is not optional here: the admin module refuses an anonymous call,
+	// and a request without it fails with 401 that reads like a misconfiguration
+	// rather than the missing header it is.
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, err
