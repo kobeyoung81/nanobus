@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/config"
@@ -64,7 +65,7 @@ for gateway and agent connections.`,
 			// answers nothing.
 			s.SetAgentEnsurer(portalclient.New(cfg.Portal.BaseURL, cfg.InternalToken))
 
-			srv := server.NewServer(s,
+			opts := []server.ServerOption{
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
 				server.WithAuthURL(cfg.Nanoauth.BaseURL, cfg.InternalToken),
 				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
@@ -77,7 +78,24 @@ for gateway and agent connections.`,
 				server.WithProvisionerURL(cfg.Provisioner.BaseURL, cfg.InternalToken),
 				server.WithMaxContentBytes(cfg.Server.MaxContentBytes),
 				server.WithInternalToken(cfg.InternalToken),
-			)
+			}
+			// The rate budget is one platform-wide number, so each replica gets its
+			// share of it. Off unless the deployment asks for it.
+			if cfg.Server.RateLimitPerMinute > 0 {
+				replicas := cfg.Server.Replicas
+				if replicas < 1 {
+					replicas = 1
+				}
+				perReplica := cfg.Server.RateLimitPerMinute / replicas
+				if perReplica < 1 {
+					perReplica = 1
+				}
+				slog.Info("rest rate limit enabled",
+					"per_minute", cfg.Server.RateLimitPerMinute,
+					"replicas", replicas, "per_replica", perReplica)
+				opts = append(opts, server.WithRateLimit(perReplica, time.Minute))
+			}
+			srv := server.NewServer(s, opts...)
 
 			if admins, err := s.CountActiveAdmins(); err == nil && admins == 0 {
 				slog.Warn("no administrator account yet",

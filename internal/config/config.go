@@ -30,6 +30,15 @@ type ServerConfig struct {
 	// MaxContentBytes bounds a single message's content. Writes above it are
 	// rejected at the API with a clear error rather than by the store.
 	MaxContentBytes int `json:"max_content_bytes" mapstructure:"max_content_bytes"`
+	// RateLimitPerMinute bounds one client's requests per minute on the bus's
+	// REST surface (0 = off, the default). Callers presenting the internal token
+	// are exempt: they are the platform's own services, and throttling them would
+	// throttle every user at once. The budget is divided by the replica count so a
+	// horizontally scaled deployment keeps one platform-wide number.
+	RateLimitPerMinute int `json:"rate_limit_per_minute" mapstructure:"rate_limit_per_minute"`
+	// Replicas is how many bus replicas serve the deployment. It exists to divide
+	// the rate budget: one global limit, split per process.
+	Replicas int `json:"replicas" mapstructure:"replicas"`
 }
 
 // DatabaseConfig holds database connection settings.

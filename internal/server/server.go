@@ -188,10 +188,24 @@ func WithMaxContentBytes(n int) ServerOption {
 	}
 }
 
+// rateLimitExempt reports the calls the limiter must not count: the platform's
+// own services (they present the internal token and share one address, so
+// throttling them would throttle every user behind them) and the two endpoints a
+// probe or scraper hits.
+func (s *Server) rateLimitExempt(r *http.Request) bool {
+	switch r.URL.Path {
+	case "/healthz", "/metrics":
+		return true
+	}
+	return s.internalKey != nil && s.internalKey.Allow(r)
+}
+
 // WithRateLimit enables per-client-IP rate limiting on the REST API.
 func WithRateLimit(limit int, window time.Duration) ServerOption {
 	return func(s *Server) {
-		s.rateLimiter = middleware.NewRateLimiter(limit, window)
+		rl := middleware.NewRateLimiter(limit, window)
+		rl.OnLimited = metrics.RateLimited.Inc
+		s.rateLimiter = rl
 	}
 }
 
@@ -269,7 +283,7 @@ func (s *Server) handler() http.Handler {
 		h = s.internalKey.Guard(h, s.protectedRequest)
 	}
 	if s.rateLimiter != nil {
-		h = s.rateLimiter.Middleware(h)
+		h = s.rateLimiter.Middleware(h, s.rateLimitExempt)
 	}
 	return h
 }

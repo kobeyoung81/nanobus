@@ -23,6 +23,10 @@ func DefaultBusConfig() BusConfig {
 			Host:            DefaultBusHost,
 			Port:            DefaultBusPort,
 			MaxContentBytes: DefaultMaxContentBytes,
+			// Off by default, and one replica unless told otherwise: a limiter
+			// that arrives switched on would be a surprise outage.
+			RateLimitPerMinute: 0,
+			Replicas:           1,
 		},
 	}
 }
@@ -44,6 +48,8 @@ func LoadBusConfig(path string) (BusConfig, error) {
 		"server.host",
 		"server.port",
 		"server.max_content_bytes",
+		"server.rate_limit_per_minute",
+		"server.replicas",
 		"database.uri",
 		"nanoauth.base_url",
 		"admin.base_url",
@@ -67,6 +73,12 @@ func LoadBusConfig(path string) (BusConfig, error) {
 	}
 	if v.IsSet("server.max_content_bytes") {
 		cfg.Server.MaxContentBytes = v.GetInt("server.max_content_bytes")
+	}
+	if v.IsSet("server.rate_limit_per_minute") {
+		cfg.Server.RateLimitPerMinute = v.GetInt("server.rate_limit_per_minute")
+	}
+	if v.IsSet("server.replicas") {
+		cfg.Server.Replicas = v.GetInt("server.replicas")
 	}
 	cfg.Database.URI = v.GetString("database.uri")
 	cfg.Nanoauth.BaseURL = v.GetString("nanoauth.base_url")

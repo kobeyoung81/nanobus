@@ -48,6 +48,13 @@ var (
 		Help: "Push frames written to agent sockets, by kind.",
 	}, []string{"kind"})
 
+	// RateLimited counts calls refused by the REST rate limiter. It is the only
+	// way to tell "the platform is busy" from "one caller is hammering it".
+	RateLimited = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "bus_rate_limited_total",
+		Help: "Requests refused by the REST rate limiter.",
+	})
+
 	// StreamWriteSeconds is the database write latency of stream events.
 	StreamWriteSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "bus_stream_write_seconds",
@@ -57,7 +64,8 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(StreamEventsWritten, StreamSubscribers, StreamWriteSeconds, AgentSockets, AgentSocketPushes, RPCRequests)
+	prometheus.MustRegister(StreamEventsWritten, StreamSubscribers, StreamWriteSeconds,
+		AgentSockets, AgentSocketPushes, RPCRequests, RateLimited)
 }
 
 // Handler serves the Prometheus text exposition.

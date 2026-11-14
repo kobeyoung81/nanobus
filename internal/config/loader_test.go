@@ -11,6 +11,8 @@ func TestLoadBusConfig_EnvVars(t *testing.T) {
 	t.Setenv("NANOSEC_BUS_SERVER_PORT", "9011")
 	t.Setenv("NANOSEC_BUS_SERVER_HOST", "127.0.0.1")
 	t.Setenv("NANOSEC_BUS_NANOAUTH_BASE_URL", "http://auth:8081")
+	t.Setenv("NANOSEC_BUS_SERVER_RATE_LIMIT_PER_MINUTE", "600")
+	t.Setenv("NANOSEC_BUS_SERVER_REPLICAS", "3")
 
 	cfg, err := LoadBusConfig("")
 	if err != nil {
@@ -29,6 +31,10 @@ func TestLoadBusConfig_EnvVars(t *testing.T) {
 	if cfg.Nanoauth.BaseURL != "http://auth:8081" {
 		t.Errorf("nanoauth base URL not read from env: %q", cfg.Nanoauth.BaseURL)
 	}
+	if cfg.Server.RateLimitPerMinute != 600 || cfg.Server.Replicas != 3 {
+		t.Errorf("rate budget not read from env: %d over %d replicas",
+			cfg.Server.RateLimitPerMinute, cfg.Server.Replicas)
+	}
 }
 
 func TestLoadBusConfig_Defaults(t *testing.T) {
@@ -38,6 +44,8 @@ func TestLoadBusConfig_Defaults(t *testing.T) {
 		"NANOSEC_BUS_SERVER_HOST",
 		"NANOSEC_BUS_SERVER_PORT",
 		"NANOSEC_BUS_NANOAUTH_BASE_URL",
+		"NANOSEC_BUS_SERVER_RATE_LIMIT_PER_MINUTE",
+		"NANOSEC_BUS_SERVER_REPLICAS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -47,6 +55,12 @@ func TestLoadBusConfig_Defaults(t *testing.T) {
 		t.Fatalf("LoadBusConfig: %v", err)
 	}
 
+	if cfg.Server.RateLimitPerMinute != 0 {
+		t.Errorf("the limiter must be off by default, got %d", cfg.Server.RateLimitPerMinute)
+	}
+	if cfg.Server.Replicas != 1 {
+		t.Errorf("default replicas = %d, want 1", cfg.Server.Replicas)
+	}
 	if cfg.Server.Host != DefaultBusHost {
 		t.Errorf("expected default host %s, got %q", DefaultBusHost, cfg.Server.Host)
 	}

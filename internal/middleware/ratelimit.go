@@ -15,6 +15,9 @@ type RateLimiter struct {
 	buckets map[string]*bucket
 	limit   int
 	window  time.Duration
+	// OnLimited, when set, is called for every refused request. The server points
+	// it at the metrics counter; a limiter built in a test leaves it nil.
+	OnLimited func()
 }
 
 type bucket struct {
@@ -47,10 +50,20 @@ func (rl *RateLimiter) Allow(key string) bool {
 }
 
 // Middleware wraps a handler with per-client-IP rate limiting.
-func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
+//
+// A request the exempt predicate accepts is passed through and not counted: the
+// bus's own services share one client address, and throttling them would throttle
+// every user behind them at once.
+func (rl *RateLimiter) Middleware(next http.Handler, exempt func(*http.Request) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := clientIP(r)
-		if !rl.Allow(key) {
+		if exempt != nil && exempt(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !rl.Allow(clientIP(r)) {
+			if rl.OnLimited != nil {
+				rl.OnLimited()
+			}
 			w.Header().Set("Retry-After", fmtDuration(rl.window))
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
