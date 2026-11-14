@@ -273,11 +273,12 @@ func (s *Server) ListenAndServe(addr string) error {
 // and the portal. Two routes are exempt:
 //
 //   - the dictation socket, which is served to a browser and authenticates with
-//     a single-use id minted through the portal;
-//   - the directory login console's subtree, which is the one request that must
-//     carry the *caller's* JWT in Authorization — the portal cannot put the
-//     internal token there as well, and nanoauth verifies that JWT and the
-//     management role itself on every route under it.
+//     a single-use id minted through the portal.
+//
+// The auth proxy that used to live here is gone: nginx sends /api/v1/auth/* and
+// /api/auth/v1/* straight to nanoauth, so the bus has no browser-facing route left
+// (the directory console included). Its own `validate_token` call is an RPC, not a
+// proxy.
 //
 // Anything else — including the WebSocket catch-all, which drives the same
 // handlers as the REST API — requires the token.
@@ -287,7 +288,7 @@ func (s *Server) protectedRequest(r *http.Request) bool {
 	if r.URL.Path == "/metrics" || r.URL.Path == "/healthz" {
 		return false
 	}
-	return r.URL.Path != voiceWSPath && !isDirectoryConsolePath(r.URL.Path)
+	return r.URL.Path != voiceWSPath
 }
 
 // Addr returns the listener address, or empty string if not listening.

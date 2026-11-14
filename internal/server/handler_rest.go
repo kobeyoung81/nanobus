@@ -49,28 +49,13 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 
 	// Users
 	mux.HandleFunc("POST /api/v1/users/resolve", s.restResolveUser)
-	mux.HandleFunc("GET /api/v1/users", s.restListUsers)
 	// Account administration, for the portal: it used to read `users` straight
 	// out of MySQL, which is what made one account two services' business.
-	mux.HandleFunc("GET /api/v1/user-accounts", s.restListUserAccounts)
-	mux.HandleFunc("GET /api/v1/user-accounts/counts", s.restCountUserAccounts)
-	mux.HandleFunc("GET /api/v1/user-accounts/{userID}", s.restGetUserAccount)
-	mux.HandleFunc("PATCH /api/v1/user-accounts/{userID}", s.restSetUserAccount)
-	mux.HandleFunc("GET /api/v1/user-accounts/{userID}/password-hash", s.restGetUserPasswordHash)
-	mux.HandleFunc("PUT /api/v1/user-accounts/{userID}/password", s.restSetUserPassword)
-	mux.HandleFunc("GET /api/v1/users/{id}", s.restGetUser)
 
 	// The three surfaces that used to be the console's and the auth service's own
 	// tables: directory links and git-browser shortcuts (the session tickets are
 	// the auth service's own now). See
 	// internal/store/identity.go for why they moved in here.
-	mux.HandleFunc("GET /api/v1/users/{userID}/oauth-links", s.restListOAuthLinks)
-	mux.HandleFunc("POST /api/v1/users/{userID}/oauth-links", s.restLinkOAuth)
-	mux.HandleFunc("DELETE /api/v1/users/{userID}/oauth-links/{provider}", s.restUnlinkOAuth)
-	mux.HandleFunc("GET /api/v1/oauth-links", s.restListOAuthLinksByProvider)
-	mux.HandleFunc("GET /api/v1/users/{userID}/git-shortcuts", s.restListGitShortcuts)
-	mux.HandleFunc("POST /api/v1/users/{userID}/git-shortcuts", s.restAddGitShortcut)
-	mux.HandleFunc("DELETE /api/v1/users/{userID}/git-shortcuts/{id}", s.restDeleteGitShortcut)
 
 	// Agents and their groups are the portal's data now. The management paths
 	// (/api/v1/agents, /api/v1/agent-groups, the attention snapshot) are served
@@ -119,46 +104,15 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/wechat-kf/counts", s.restCountWeChatKF)
 	mux.HandleFunc("DELETE /api/v1/runners/{id}", s.restDeleteRunner)
 
-	// Auth reverse proxy → nanoauth
-	s.registerAuthProxy(mux)
-
 	// Enterprise admin: the audit trail is the admin module's collection; these
 	// two routes forward to it, so a caller that addresses the bus still works.
-	mux.HandleFunc("GET /api/v1/audit", s.restListAudit)
-	mux.HandleFunc("POST /api/v1/audit", s.restRecordAudit)
 
 	// Capability catalog: admin management
-	mux.HandleFunc("GET /api/v1/capabilities/builtin", s.restListBuiltin)
-	mux.HandleFunc("PUT /api/v1/capabilities/builtin/{id}", s.restUpdateBuiltin)
 	// Agent types (platform policy plane) + permission keys
 	// Prompt baseline: where each type's stored prompt stands relative to the
 	// bundle this binary ships, and the single-type restore behind that.
-	mux.HandleFunc("GET /api/v1/capabilities/mcp", s.restListMcpAdmin)
-	mux.HandleFunc("POST /api/v1/capabilities/mcp", s.restCreateMcpAdmin)
-	mux.HandleFunc("POST /api/v1/capabilities/mcp/test", s.restTestMcpAdmin)
-	mux.HandleFunc("PUT /api/v1/capabilities/mcp/{id}", s.restUpdateMcpAdmin)
-	mux.HandleFunc("PUT /api/v1/capabilities/mcp/{id}/state", s.restUpdateMcpState)
-	mux.HandleFunc("DELETE /api/v1/capabilities/mcp/{id}", s.restDeleteMcpAdmin)
-	mux.HandleFunc("GET /api/v1/capabilities/skills", s.restListSkillsAdmin)
-	mux.HandleFunc("POST /api/v1/capabilities/skills", s.restCreateSkillAdmin)
-	mux.HandleFunc("PUT /api/v1/capabilities/skills/{id}", s.restUpdateSkillAdmin)
-	mux.HandleFunc("PUT /api/v1/capabilities/skills/{id}/state", s.restUpdateSkillState)
-	mux.HandleFunc("DELETE /api/v1/capabilities/skills/{id}", s.restDeleteSkillAdmin)
 
 	// Capability catalog: user-scoped library + per-agent settings
-	mux.HandleFunc("GET /api/v1/user/capabilities/library/mcp", s.restListMyMcp)
-	mux.HandleFunc("POST /api/v1/user/capabilities/library/mcp", s.restCreateMyMcp)
-	mux.HandleFunc("POST /api/v1/user/capabilities/library/mcp/test", s.restTestMcpMy)
-	mux.HandleFunc("PUT /api/v1/user/capabilities/library/mcp/{id}", s.restUpdateMyMcp)
-	mux.HandleFunc("DELETE /api/v1/user/capabilities/library/mcp/{id}", s.restDeleteMyMcp)
-	mux.HandleFunc("GET /api/v1/user/capabilities/library/skills", s.restListMySkills)
-	mux.HandleFunc("POST /api/v1/user/capabilities/library/skills", s.restCreateMySkill)
-	mux.HandleFunc("PUT /api/v1/user/capabilities/library/skills/{id}", s.restUpdateMySkill)
-	mux.HandleFunc("DELETE /api/v1/user/capabilities/library/skills/{id}", s.restDeleteMySkill)
-	mux.HandleFunc("GET /api/v1/user/capabilities/agents/{agentID}", s.restAgentCapabilities)
-	mux.HandleFunc("PUT /api/v1/user/capabilities/agents/{agentID}", s.restSetAgentCapability)
-	mux.HandleFunc("DELETE /api/v1/user/capabilities/agents/{agentID}", s.restDeleteAgentCapability)
-	mux.HandleFunc("PUT /api/v1/user/capabilities/agents/{agentID}/permissions", s.restSetAgentPermissions)
 	// Per-(agent, mode) override config (model/thinking/settings).
 	mux.HandleFunc("GET /api/v1/user/agents/{agentID}/modes/{typeID}", s.restGetAgentMode)
 	mux.HandleFunc("PUT /api/v1/user/agents/{agentID}/modes/{typeID}", s.restSetAgentMode)
@@ -166,8 +120,6 @@ func (s *Server) registerRESTRoutes(mux *http.ServeMux) {
 	// Assignable conversational agent types for new agents.
 	// Prompt blocks of the session agents (read-only on the user plane).
 	// The account's language: the user-level half of the two-level setting.
-	mux.HandleFunc("GET /api/v1/user/preferences", s.restGetPreferences)
-	mux.HandleFunc("PUT /api/v1/user/preferences", s.restSetPreferences)
 	// Skill update acknowledgement + user-supplied secrets.
 	mux.HandleFunc("POST /api/v1/user/skill-acks", s.restUserSkillAck)
 	mux.HandleFunc("GET /api/v1/user/secrets/{kind}/{ref}", s.restListUserSecrets)

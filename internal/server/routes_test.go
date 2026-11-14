@@ -105,11 +105,10 @@ func TestBusDoesNotServeAgentManagement(t *testing.T) {
 	}
 }
 
-// The accounts are nanoauth's, and it signs up through its own store: the bus
-// used to expose a create endpoint that only nanoauth ever called, which made a
-// registration loop back through a second module. What has to stay true is that
-// the loop is gone — the route must be unreachable and the table must not name
-// it — while the lookups the console and the runtime still use remain.
+// The accounts are nanoauth's, end to end: it signs up through its own store, and
+// the console now asks it directly for the list, the counts and the password. What
+// has to stay true is that the bus neither creates nor serves accounts — only the
+// identity resolution the gateway needs (`/api/v1/users/resolve`) remains.
 func TestBusDoesNotCreateAccounts(t *testing.T) {
 	s := NewServer(nil)
 	mux := http.NewServeMux()
@@ -118,10 +117,9 @@ func TestBusDoesNotCreateAccounts(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/users",
 		strings.NewReader(`{"id":"u-1","email":"a@b.c","password_hash":"h"}`)))
-	// 405 rather than 404: the path still serves the list, and the method it does
-	// not answer is the create.
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /api/v1/users = %d, want 405: nanoauth writes its own accounts", rec.Code)
+	// The path is gone entirely: nanoauth creates accounts through its own store.
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("POST /api/v1/users = %d, want 404: nanoauth writes its own accounts", rec.Code)
 	}
 
 	source, err := os.ReadFile("handler_rest.go")
@@ -131,9 +129,14 @@ func TestBusDoesNotCreateAccounts(t *testing.T) {
 	if strings.Contains(string(source), `"POST /api/v1/users"`) {
 		t.Error(`handler_rest.go names "POST /api/v1/users" again: the account create is nanoauth's`)
 	}
-	for _, want := range []string{`"POST /api/v1/users/resolve"`, `"GET /api/v1/users"`, `"GET /api/v1/user-accounts"`} {
-		if !strings.Contains(string(source), want) {
-			t.Errorf("handler_rest.go is missing %s: the console and the gateway still read accounts", want)
+	if !strings.Contains(string(source), `"POST /api/v1/users/resolve"`) {
+		t.Error("handler_rest.go is missing POST /api/v1/users/resolve: the gateway resolves identities here")
+	}
+	// The account surface moved to nanoauth with the row: a forwarding route here
+	// is the two-hop we just removed.
+	for _, gone := range []string{`/api/v1/user-accounts`, `git-shortcuts`, `oauth-links`, `user/preferences`} {
+		if strings.Contains(string(source), gone) {
+			t.Errorf("handler_rest.go still serves %s: nanoauth owns it now", gone)
 		}
 	}
 }

@@ -65,16 +65,3 @@ func (s *Server) recordAudit(r *http.Request, action, resourceType, resourceID s
 //
 // The route is kept so a caller that still addresses the bus keeps working; the
 // console asks the admin module directly through the portal.
-func (s *Server) restListAudit(w http.ResponseWriter, r *http.Request) {
-	path := "/api/v1/audit"
-	if query := r.URL.RawQuery; query != "" {
-		path += "?" + query
-	}
-	s.forwardToAdmin(w, r, http.MethodGet, path)
-}
-
-// restRecordAudit forwards one append to the admin module. The body is the
-// entry shape both faces share; the admin module assigns the id and the time.
-func (s *Server) restRecordAudit(w http.ResponseWriter, r *http.Request) {
-	s.forwardToAdmin(w, r, http.MethodPost, "/api/v1/internal/audit")
-}

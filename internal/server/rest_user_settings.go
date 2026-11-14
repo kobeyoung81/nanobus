@@ -2,8 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+
+	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 )
 
 // ======== user: skill acknowledgement ========
@@ -130,4 +133,17 @@ func validSecretKind(kind string) bool {
 		return true
 	}
 	return false
+}
+
+// writeAuthFailure answers with the identity module's own status when it rejected
+// the call (a 404 for an account that is not there, a 409 for a taken address), and
+// with 502 when it could not be reached: the caller turns the first into "not
+// found" and the second into "something is wrong".
+func writeAuthFailure(w http.ResponseWriter, err error) {
+	var rejected *authclient.StatusError
+	if errors.As(err, &rejected) && rejected.Status < http.StatusInternalServerError {
+		writeJSON(w, rejected.Status, map[string]string{"error": rejected.Body})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the auth module is unavailable"})
 }
