@@ -30,7 +30,7 @@ func (s *Server) agentInfo(a store.AgentRecord) nanoprotocol.AgentInfo {
 	// round-trip.
 	modelID, _ := s.store.DefaultModeModel(a.ID)
 	modelName := ""
-	if m, err := s.store.GetModel(modelID); err == nil && m != nil {
+	if m, err := s.lookupModel(modelID); err == nil && m != nil {
 		modelName = m.Name
 	}
 	return nanoprotocol.AgentInfo{

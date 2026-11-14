@@ -77,7 +77,7 @@ func (s *Server) voiceConfig() (voice.Config, error) {
 // resolvePlatformProvider looks one catalog provider up and refuses a user-scope
 // entry: a user's own credentials must not serve the whole platform.
 func (s *Server) resolvePlatformProvider(id int64) (voice.Provider, error) {
-	p, err := s.store.GetModelProvider(id)
+	p, err := s.lookupModelProvider(id)
 	if err != nil {
 		return voice.Provider{}, fmt.Errorf("load voice provider: %w", err)
 	}
@@ -158,19 +158,19 @@ func (s *Server) restVoiceConfig(w http.ResponseWriter, r *http.Request) {
 	// Names are best-effort: an unset or dangling id must not break the view.
 	realtimeName := ""
 	if cfg.Realtime.ProviderID != 0 {
-		if p, err := s.store.GetModelProvider(cfg.Realtime.ProviderID); err == nil && p != nil {
+		if p, err := s.lookupModelProvider(cfg.Realtime.ProviderID); err == nil && p != nil {
 			realtimeName = p.Name
 		}
 	}
 	batchName := ""
 	if cfg.Batch.ProviderID != 0 {
-		if p, err := s.store.GetModelProvider(cfg.Batch.ProviderID); err == nil && p != nil {
+		if p, err := s.lookupModelProvider(cfg.Batch.ProviderID); err == nil && p != nil {
 			batchName = p.Name
 		}
 	}
 	polishModelName := ""
 	if cfg.Polish.ModelID != 0 {
-		if m, err := s.store.GetModel(cfg.Polish.ModelID); err == nil && m != nil {
+		if m, err := s.lookupModel(cfg.Polish.ModelID); err == nil && m != nil {
 			polishModelName = m.Name
 		}
 	}
@@ -307,14 +307,14 @@ func (s *Server) restVoicePolish(w http.ResponseWriter, r *http.Request) {
 // chatModel resolves a catalog model id to its provider API model name and// connection, refusing a user-scope provider for the same reason voiceProvider
 // does.
 func (s *Server) chatModel(modelID int64) (string, voice.Provider, error) {
-	m, err := s.store.GetModel(modelID)
+	m, err := s.lookupModel(modelID)
 	if err != nil {
 		return "", voice.Provider{}, fmt.Errorf("load model: %w", err)
 	}
 	if m == nil {
 		return "", voice.Provider{}, fmt.Errorf("model %d not found", modelID)
 	}
-	p, err := s.store.GetModelProvider(m.ProviderID)
+	p, err := s.lookupModelProvider(m.ProviderID)
 	if err != nil {
 		return "", voice.Provider{}, fmt.Errorf("load provider: %w", err)
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
@@ -119,5 +120,9 @@ func SettingsToConfigItems(settings map[string]string, maxRounds int) []nanoprot
 		}
 		items = append(items, nanoprotocol.ConfigItem{Key: cfgKey, Value: value, ValueType: "string"})
 	}
+	// A map has no order, and this slice ends up in the agent's snapshot: sorting
+	// keeps two identical reads identical, which is what makes a snapshot
+	// comparable at all.
+	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
 	return items
 }

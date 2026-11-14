@@ -94,3 +94,36 @@ func (s *Server) resolveCapabilities(agentID string) (*nanoprotocol.Capabilities
 	}
 	return s.catalogue.ModeCapabilities(context.Background(), agentID, agent.UserID, s.store.DefaultModeTypeID(agentID))
 }
+
+// lookupModel and lookupModelProvider answer from the catalogue's owner when it is
+// configured. They used to read admin_models and admin_model_providers here.
+func (s *Server) lookupModel(id int64) (*nanoprotocol.ModelDef, error) {
+	if s.catalogue != nil && s.catalogue.Enabled() {
+		return s.catalogue.Model(context.Background(), id)
+	}
+	return s.store.GetModel(id)
+}
+
+func (s *Server) lookupModelProvider(id int64) (*nanoprotocol.ModelProviderDef, error) {
+	if s.catalogue != nil && s.catalogue.Enabled() {
+		return s.catalogue.ModelProvider(context.Background(), id)
+	}
+	return s.store.GetModelProvider(id)
+}
+
+// lookupAgentMode answers one (agent, mode) from the catalogue's owner. It used to
+// be two reads of admin_agent_types and admin_agent_type_overrides.
+func (s *Server) lookupAgentMode(agentID, typeID string) (*admincatalogue.AgentMode, error) {
+	if s.catalogue != nil && s.catalogue.Enabled() {
+		return s.catalogue.AgentMode(context.Background(), agentID, typeID)
+	}
+	at, err := s.store.GetAgentType(typeID)
+	if err != nil {
+		return nil, err
+	}
+	ov, err := s.store.GetAgentTypeOverride(agentID, typeID)
+	if err != nil {
+		return nil, err
+	}
+	return &admincatalogue.AgentMode{Type: at, Override: ov}, nil
+}

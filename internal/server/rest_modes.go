@@ -20,16 +20,12 @@ func (s *Server) restGetAgentMode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
 	}
-	at, err := s.store.GetAgentType(typeID)
+	mode, err := s.lookupAgentMode(agentID, typeID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	ov, err := s.store.GetAgentTypeOverride(agentID, typeID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		return
-	}
+	at, ov := mode.Type, mode.Override
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agent_id": agentID,
 		"type_id":  typeID,

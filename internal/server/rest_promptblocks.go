@@ -43,6 +43,21 @@ func (s *Server) restGetAgentPromptBlocks(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
 	}
+	if s.catalogue != nil && s.catalogue.Enabled() {
+		blocks, err := s.catalogue.PromptBlocks(r.Context(), agentID)
+		if err != nil {
+			slog.Error("get prompt blocks", "agent_id", agentID, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the catalogue module is unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"agent_id":    agentID,
+			"head":        blocks.Head,
+			"head_source": blocks.HeadSource,
+			"mode_notes":  blocks.ModeNotes,
+		})
+		return
+	}
 	platform, err := s.store.PlatformSessionHead()
 	if err != nil {
 		slog.Error("get session head prompt", "error", err)

@@ -6,6 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/portalagents"
+
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -30,6 +32,11 @@ type AgentRecord struct {
 	MaxIterations         int
 	MaxConcurrentMessages int
 	Status                string
+	// SessionAgents and DefaultAgent are the row's own facts, filled when the row
+	// comes from its owner over the API. They are not stored here: the bus reads
+	// them, it does not write them.
+	SessionAgents []string
+	DefaultAgent  string
 }
 
 const (
@@ -116,7 +123,22 @@ type SessionAgent struct {
 }
 
 // SessionAgentsForAgent lists an agent's switchable session agents in order.
+//
+// Through the row rather than the collection: the portal owns it, and it already
+// answers this list with the row (positions reconstructed from the order it stores
+// them in).
 func (s *Store) SessionAgentsForAgent(agentID string) ([]SessionAgent, error) {
+	if s.agentSource != nil && s.agentSource.Enabled() {
+		row, err := s.GetAgent(agentID)
+		if err != nil || row == nil {
+			return nil, err
+		}
+		out := make([]SessionAgent, 0, len(row.SessionAgents))
+		for i, id := range row.SessionAgents {
+			out = append(out, SessionAgent{DefID: id, Position: i, IsDefault: id == row.DefaultAgent})
+		}
+		return out, nil
+	}
 	ctx, cancel := opCtx()
 	defer cancel()
 
@@ -197,7 +219,29 @@ var agentProjection = bson.D{
 	{Key: "status", Value: 1},
 }
 
+// SetAgentSource attaches the agent rows' owner. Without it the store keeps
+// reading the collection itself, which is the switch a rolling upgrade needs: the
+// portal may still be running the image from before the internal read existed.
+func (s *Store) SetAgentSource(source *portalagents.Client) { s.agentSource = source }
+
 func (s *Store) GetAgent(agentID string) (*AgentRecord, error) {
+	if s.agentSource != nil && s.agentSource.Enabled() {
+		ctx, cancel := accountContext()
+		defer cancel()
+		row, err := s.agentSource.GetAgent(ctx, agentID)
+		if err != nil {
+			return nil, err
+		}
+		if row == nil {
+			return nil, nil
+		}
+		return &AgentRecord{
+			ID: row.ID, UserID: row.UserID, TypeID: row.TypeID, GroupID: row.GroupID,
+			DisplayName: row.DisplayName, Description: row.Description,
+			Settings: row.Settings, MaxIterations: row.MaxIterations, Status: row.Status,
+			SessionAgents: row.SessionAgents, DefaultAgent: row.DefaultAgent,
+		}, nil
+	}
 	ctx, cancel := opCtx()
 	defer cancel()
 

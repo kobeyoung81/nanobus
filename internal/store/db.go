@@ -17,6 +17,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
+	"gitee.com/kobeyoung81/nanobus/internal/portalagents"
+
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
 
@@ -36,6 +38,9 @@ type Store struct {
 	// agents is the agent rows' owner — the portal. Onboarding asks it to make
 	// sure a brand-new account has an agent to answer with.
 	agents AgentEnsurer
+	// agentSource reads one agent row over the portal's internal API. Nil keeps
+	// the bus's own read (the rolling-upgrade switch).
+	agentSource *portalagents.Client
 }
 
 // Open connects to MongoDB and returns a Store. It pings the server so a bad URI
