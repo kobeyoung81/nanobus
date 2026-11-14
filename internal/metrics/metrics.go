@@ -28,6 +28,13 @@ var (
 		Help: "Open stream subscriptions (per conversation and platform events).",
 	})
 
+	// RPCRequests counts message dispatches by type. It is how a rollout of the
+	// agent socket is verified: poll_inbound should collapse once agents connect.
+	RPCRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "bus_rpc_requests_total",
+		Help: "Protocol messages dispatched, by type.",
+	}, []string{"type"})
+
 	// AgentSockets is the number of agent processes connected to this replica
 	// over the WebSocket transport. The fallback poll rate is what it replaces.
 	AgentSockets = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -50,7 +57,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(StreamEventsWritten, StreamSubscribers, StreamWriteSeconds, AgentSockets, AgentSocketPushes)
+	prometheus.MustRegister(StreamEventsWritten, StreamSubscribers, StreamWriteSeconds, AgentSockets, AgentSocketPushes, RPCRequests)
 }
 
 // Handler serves the Prometheus text exposition.

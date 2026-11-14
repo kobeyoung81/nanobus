@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/metrics"
 	"gitee.com/kobeyoung81/nanobus/internal/store"
 	"gitee.com/kobeyoung81/nanoprotocol"
 	"github.com/gorilla/websocket"
@@ -32,6 +33,7 @@ func (s *Server) handleConnection(conn *websocket.Conn) {
 }
 
 func (s *Server) handleMessage(msg nanoprotocol.Message) *nanoprotocol.Message {
+	metrics.RPCRequests.WithLabelValues(msg.Type).Inc()
 	switch msg.Type {
 	case nanoprotocol.TypeResolveUser:
 		return s.handleResolveUser(msg)
