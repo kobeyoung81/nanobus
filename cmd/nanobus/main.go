@@ -68,6 +68,9 @@ for gateway and agent connections.`,
 				server.WithNanoauthURL(cfg.Nanoauth.BaseURL),
 				server.WithAuthURL(cfg.Nanoauth.BaseURL, cfg.InternalToken),
 				server.WithAdminURL(cfg.Admin.BaseURL, cfg.InternalToken),
+				// The catalogue's owner answers the resolution; NANOSEC_BUS_CATALOGUE_SOURCE=mongo
+				// keeps the bus's own read for a rolling upgrade.
+				server.WithAdminCatalogue(catalogueBaseURL(cfg), cfg.InternalToken),
 				server.WithPortalURL(cfg.Portal.BaseURL, cfg.InternalToken),
 				server.WithProvisionerURL(cfg.Provisioner.BaseURL, cfg.InternalToken),
 				server.WithMaxContentBytes(cfg.Server.MaxContentBytes),
@@ -309,4 +312,14 @@ func newVersionCmd() *cobra.Command {
 			fmt.Printf("nanobus %s (commit: %s, built: %s)\n", version, commit, date)
 		},
 	}
+}
+
+// catalogueBaseURL is where the bus asks for one agent's resolved catalogue. The
+// switch exists for the rolling upgrade in which the admin module still runs the
+// image from before the endpoint: the bus then reads the collections itself.
+func catalogueBaseURL(cfg config.BusConfig) string {
+	if os.Getenv("NANOSEC_BUS_CATALOGUE_SOURCE") == "mongo" {
+		return ""
+	}
+	return cfg.Admin.BaseURL
 }

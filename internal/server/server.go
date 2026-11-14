@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"gitee.com/kobeyoung81/nanobus/internal/admincatalogue"
 	"gitee.com/kobeyoung81/nanobus/internal/adminclient"
 	"gitee.com/kobeyoung81/nanobus/internal/authclient"
 	"gitee.com/kobeyoung81/nanobus/internal/metrics"
@@ -32,6 +33,10 @@ type Server struct {
 	nanoauthURL string
 	auth        *authclient.Client
 	admin       *adminclient.Client
+	// catalogue resolves one agent's runtime from the admin module's collections
+	// over HTTP. Nil (or disabled) keeps the bus's own resolution, which is the
+	// rollback switch for a rolling upgrade.
+	catalogue   *admincatalogue.Client
 	portal      *portalclient.Client
 	provisioner *provisionerclient.Client
 	chunks      *stream.ChunkBuffer
@@ -123,6 +128,16 @@ func WithNanoauthURL(url string) ServerOption {
 func WithAuthURL(url, token string) ServerOption {
 	return func(s *Server) {
 		s.auth = authclient.New(url, token)
+	}
+}
+
+// WithAdminCatalogue attaches the admin module's resolution API: the bus asks it
+// for one agent's catalogue instead of reading the collections itself. Without it
+// the bus keeps its own resolution — the same answer, and the switch a rolling
+// upgrade needs.
+func WithAdminCatalogue(baseURL, token string) ServerOption {
+	return func(s *Server) {
+		s.catalogue = admincatalogue.New(baseURL, token)
 	}
 }
 

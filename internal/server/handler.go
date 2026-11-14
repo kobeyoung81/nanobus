@@ -343,7 +343,7 @@ func (s *Server) handleGetCapabilities(msg nanoprotocol.Message) *nanoprotocol.M
 		return &resp
 	}
 
-	capabilities, err := s.store.ResolveCapabilities(req.AgentID)
+	capabilities, err := s.resolveCapabilities(req.AgentID)
 	if err != nil {
 		slog.Error("get capabilities failed", "agent_id", req.AgentID, "error", err)
 		resp := nanoprotocol.NewErrorMessage("get capabilities: " + err.Error())
@@ -376,11 +376,12 @@ func (s *Server) handleGetAgentSnapshot(msg nanoprotocol.Message) *nanoprotocol.
 		resp := nanoprotocol.NewErrorMessage("agent not found: " + req.AgentID)
 		return &resp
 	}
-	caps, err := s.store.ResolveCapabilities(req.AgentID)
+	resolution, err := s.resolveRuntime(*agent)
 	if err != nil {
-		resp := nanoprotocol.NewErrorMessage("get capabilities: " + err.Error())
+		resp := nanoprotocol.NewErrorMessage("resolve runtime: " + err.Error())
 		return &resp
 	}
+	caps := resolution.Capabilities
 	config, err := s.configItems(context.Background(), "agent")
 	if err != nil {
 		resp := nanoprotocol.NewErrorMessage("get config: " + err.Error())
@@ -388,14 +389,10 @@ func (s *Server) handleGetAgentSnapshot(msg nanoprotocol.Message) *nanoprotocol.
 	}
 	// Overlay the AgentType/agent runtime settings projected as flat config
 	// keys, so the agent keeps consuming `agent.*` / `tools.*` unchanged.
-	settings, err := s.store.EffectiveAgentSettings(req.AgentID)
-	if err != nil {
-		resp := nanoprotocol.NewErrorMessage("get settings: " + err.Error())
-		return &resp
-	}
+	settings := resolution.Settings
 	var maxRounds int
-	if at, err := s.store.AgentTypeForAgent(req.AgentID); err == nil && at != nil {
-		maxRounds = at.MaxRounds
+	if resolution.Type != nil {
+		maxRounds = resolution.Type.MaxRounds
 	}
 	projected := store.SettingsToConfigItems(settings, maxRounds)
 	projectedKeys := make(map[string]struct{}, len(projected))
@@ -411,10 +408,9 @@ func (s *Server) handleGetAgentSnapshot(msg nanoprotocol.Message) *nanoprotocol.
 		}
 	}
 	config = append(merged, projected...)
-	defs, err := s.store.ResolveAgentDefinitions(req.AgentID)
-	if err != nil {
-		resp := nanoprotocol.NewErrorMessage("resolve agent definitions: " + err.Error())
-		return &resp
+	defs := resolution.Definitions
+	if defs == nil {
+		defs = []nanoprotocol.AgentTypeDef{}
 	}
 	info := s.agentInfo(*agent)
 	info.Settings = s.withUserLanguage(info.Settings, agent.UserID)
