@@ -1,183 +1,115 @@
 # nanobus
 
-WebSocket message broker with MongoDB storage for MyriadMind.
+Messages, and nothing else: the queues, the event stream and the tunnel fallback
+of the NanoSec platform.
 
-## Overview
+It is one of the eight first-class services. Every channel, every agent container
+and every console read that has to wait for an answer passes through it.
 
-`nanobus` is the central message routing service. It provides:
-- **User registry** — onboard and manage users with per-channel identity linking
-- **Message queues** — per-user inbound/outbound queues with atomic claiming
-- **WebSocket server** — single endpoint handling all protocol message types
-- **HTTP REST + SSE surface** — `/api/v1/*` RPC endpoints plus `/auth/v1/*` proxied to nanoauth
-- **Service configuration** — key-value config store for all cluster services
-- **Runner registry** — track Docker / Swarm / Kubernetes provisioning instances
-- **WeChat KF sync state** — cursor and token persistence for chat platform sync
-- **Agent registry & sessions** — per-user agents and their `portal_sessions` projection
-- **Enterprise data** — audit log, alert rules
+## What it is
 
-## Architecture
+- **Per-user queues.** Inbound and outbound, claimed with one atomic write so a
+  message is never handed to two consumers.
+- **One event stream.** Streamed chunks are written to a collection and fanned out
+  from there, so a replica restart does not lose the tail of an answer.
+- **Tunnel fallback.** Tunnels terminate at the provisioner; the bus keeps the old
+  endpoint for containers whose image still dials it.
+- **Fleet bookkeeping.** The runner registry, heartbeat sweeps and the WeChat
+  customer-service cursor.
+- **No domain data.** Configuration, the catalogue, agents, sessions and the audit
+  trail belong to their modules; the bus asks them over internal HTTP.
 
-```
-Gateway --WebSocket/HTTP--> nanobus (server)
-Agent   --WebSocket/HTTP-->   |-- handler.go (protocol type dispatch)
-Runner  --WebSocket/HTTP-->   |-- handler_rest.go (REST /api/v1/rpc)
-Portal  --HTTP---------->     |-- proxy_auth.go  (/auth/v1/* -> nanoauth)
-                              |-- stream/        (SSE chunk buffer, events)
-                              |-- store/
-                              |   |-- user.go      (user registry, auto-onboarding)
-                              |   |-- queue.go     (inbound/outbound queues, FOR UPDATE)
-                              |   |-- config.go    (admin_config CRUD)
-                              |   |-- agent.go     (agent registry)
-                              |   |-- session.go   (portal_sessions)
-                              |   |-- audit.go     (audit_log)
-                              |   |-- runner.go    (runner registration + heartbeat)
-                              |   |-- wechatkf_state.go (sync cursor + callback token)
-                              |   |-- migrate_mongo.go (declarative index manifests)
-                              |
-                            MongoDB
-```
+## Where it sits
 
-## Data model
+| | |
+|---|---|
+| Collections | `bus_*` and `sys_*` — nothing else |
+| Port | `9000` in the network, `14400` on the host (loopback) |
+| Talks to | gateway, agent containers, the console, the provisioner, and the four module owners |
+| Owned by | `nanobus` is the only writer of `bus_inbound_queue`, `bus_outbound_queue`, `bus_stream_events`, `bus_platform_events`, `bus_voice_sessions` |
+| Metrics | `GET /metrics` and `GET /healthz`, anonymous on the internal network |
 
-MongoDB is the only store. The collections and their indexes are declared by the
-manifests in `migrations-mongo/`, embedded with `go:embed` and applied in filename
-order by `nanobus migrate up`; the applied names are recorded in the
-`sys_migrations` collection, one document per service (bus and nanoartifacts share it).
-
-| Manifest | Collections |
-|----------|-------------|
-| 001 | `admin_config` |
-| 002 | `portal_agents` |
-| 003 | `admin_audit_log`, `admin_alert_rules` |
-| 004 | `provisioner_runners` |
-| 005 | `admin_agent_types` |
-| 006 | `bus_inbound_queue`, `bus_outbound_queue` |
-| 007 | `auth_users`, `provisioner_container_requests` |
-| 008 | `admin_models`, `admin_model_providers` |
-| 009 | `admin_agent_type_overrides` |
-| 010 | `admin_mcp_servers`, `admin_skills`, `auth_secrets`, `admin_user_skill_acks` |
-| 011 | `portal_sessions` |
-| 012 | `admin_prompts` |
-| 013 | `auth_oauth_providers`, `auth_git_shortcuts`, `auth_refresh_tokens` |
-| 014 | `portal_agent_groups` |
-
-A manifest is declarative — it names the indexes a collection must have (and
-optionally a validator). Creating an index that already exists is a no-op, so a
-partially applied manifest is harmless.
-
-The document shapes live next to the code that reads them (`storedUser`,
-`storedAgentSession`, … in `internal/store/*.go`); this file does not duplicate them.
-
-## Key Design Decisions
-
-### Atomic Message Claiming
-`ClaimInbound` and `ClaimOutbound` each claim with a single atomic
-`findOneAndUpdate`. A message claimed by one agent/gateway cannot be handed to
-another.
-
-### Auto-Onboarding
-When `ResolveUser`/`ResolveUserBinding` encounters an unknown platform identity, it automatically:
-1. Creates the user with the channel identity embedded in it, in one `insertOne`
-   with status `pending` and tier `free`
-2. Enqueues a container request (`status=pending`)
-3. Returns the new user with `is_new=true`
-
-The second write is deliberately not in a transaction with the first: a failure
-there leaves a working binding whose container has not been asked for, which the
-provisioning path recovers from.
-
-### Migrations
-MongoDB manifests are embedded via `go:embed` and applied in filename order; the
-applied names are recorded in the `sys_migrations` collection, scoped by the `service` field. `migrate up`
-also fills the denormalized `portal_sessions.title`.
-
-### Runner registry & stale runners
-The bus owns the `provisioner_runners` collection. A runner registers with a stable `id` (pass `--runner-id`
-or set the `runner.runnerID` config item) so restarts update the same document instead of
-inserting a new one. The bus:
-- touches `last_heartbeat` on every container poll (WebSocket and REST paths),
-- runs a **sweeper** (every 60s) that marks `status='offline'` where
-  `last_heartbeat` is older than 2 minutes — it never deletes documents,
-- exposes `DELETE /api/v1/runners/{id}` so operators can prune dead runners by hand.
-
-### Gateway web channel RPC
-The gateway web channel authenticates browsers and lists agents through two RPC
-message types the bus implements: `validate_token` (delegates to nanoauth
-`/auth/v1/userinfo`) and `list_agents` (reads the agent registry). The bus REST
-surface also carries agent CRUD (`POST/PUT/DELETE /api/v1/agents`).
-
-## CLI Reference
+## Quick start
 
 ```bash
-nanobus                                     # Start server (WS + REST + SSE + auth proxy)
-nanobus --config ~/.nanosec/bus.json        # Start with a config file
-nanobus version                             # Print version info
-nanobus user add <user-id>                  # Register a user
-nanobus user list                           # List all users
-nanobus user link <user-id> <channel> <sender-id>  # Link channel identity
-nanoadmin config seed                       # Seed the platform defaults (admin module)
-nanobus config get <component-type> [key]   # Get config item(s)
-nanobus config set <component-type> <key> <value>  # Set a config item
-nanobus migrate up                          # Apply pending migrations
-nanobus migrate status                      # Show migration status
+go build ./cmd/nanobus
+NANOSEC_BUS_DATABASE_URI="mongodb://localhost:27017/nanosec" \
+NANOSEC_BUS_INTERNAL_TOKEN="$(openssl rand -hex 24)" \
+  ./nanobus
 ```
+
+Apply the manifests first — the three collection families and their TTLs are
+declared there, not in code:
+
+```bash
+nanobus migrate up
+nanobus migrate status
+```
+
+The rest of the stack is in `deploy/` of the super-repo:
+`docker compose up -d` brings the bus up together with the modules it calls.
 
 ## Configuration
 
-Loaded from file or environment variables (prefix: `NANOSEC_BUS_`).
+| Variable | Meaning |
+|---|---|
+| `NANOSEC_BUS_DATABASE_URI` | The one database; the bus writes its prefixes in it |
+| `NANOSEC_BUS_INTERNAL_TOKEN` | Platform-wide shared secret for `/api/v1/internal/*` |
+| `NANOSEC_BUS_ADMIN_BASE_URL` | Where the catalogue is asked |
+| `NANOSEC_BUS_PORTAL_BASE_URL` | Where agent rows and their groups live |
+| `NANOSEC_BUS_PROVISIONER_BASE_URL` | Where a container request is enqueued |
+| `NANOSEC_BUS_NANOAUTH_BASE_URL` | Identity for onboarding and token validation |
 
-```json
-{
-  "server": {
-    "host": "0.0.0.0",
-    "port": 9000,
-    "max_content_bytes": 16777215
-  },
-  "database": {
-    "uri": "mongodb://nanobus:…@mongo:27017/nanobus?authSource=admin"
-  },
-  "nanoauth": {
-    "baseURL": "http://nanoauth:8081"
-  }
-}
-```
+Operational settings (ports, rate limits, timings) live in `admin_config` and are
+edited in the console. `server.rateLimitPerMinute` is one platform-wide budget: each
+replica is given its share, so five replicas at 600 means 120 each.
 
-`nanoauth.baseURL` (env `NANOSEC_BUS_NANOAUTH_BASE_URL`) enables the `/auth/v1/*` reverse proxy to the nanoauth service.
+## HTTP surface
 
-`database.uri` (env `NANOSEC_BUS_DATABASE_URI`) must name the database the bus
-owns; it is the only connection string the service takes.
+| Surface | What it does |
+|---|---|
+| `POST /api/v1/inbound`, `POST /api/v1/inbound/poll` | Queue a user message, claim one |
+| `POST /api/v1/outbound`, `…/chunk`, `…/complete` | Write a reply, a streamed piece, the end of a turn |
+| `GET /api/v1/outbound/stream`, `GET /api/v1/events/stream` | SSE: one conversation, and the platform events |
+| `POST /api/v1/rpc` | The protocol message dispatch used by every service |
+| `GET /ws/agent`, `GET /ws/terminal` | The agent socket and the terminal bridge |
+| `GET /ws/hypervisor`, `POST /api/v1/internal/tunnels/{name}/request` | The tunnel fallback and the relay |
+| `POST /api/v1/runners/register`, `GET /api/v1/runners` | The runner registry |
 
-`server.max_content_bytes` (env `NANOSEC_BUS_SERVER_MAX_CONTENT_BYTES`) bounds a
-single inbound/outbound message body. Messages above it are rejected with HTTP
-413 and a clear error rather than by the store. It defaults to 16,777,215
-(16 MiB - 1).
+## Design decisions
 
-## Deployment
+- **Claiming is one write.** `findOneAndUpdate` on `status`, so two agents polling
+  at the same millisecond cannot both take the message.
+- **Chunks go to a collection, not a ring buffer.** `bus_stream_events` is keyed by
+  channel and conversation, expires after 600 seconds, and is trimmed to 1,000
+  events per conversation; a subscription replays by `ObjectId`, which is comparable
+  across processes.
+- **A `complete` flushes first.** The streamed pieces are written before the
+  completion is acknowledged, so a consumer never sees an answer end before its last
+  piece.
+- **The sweeper never deletes.** A runner silent for two minutes is marked
+  `offline`; pruning is a deliberate `DELETE /api/v1/runners/{id}`.
 
-### Docker
-```bash
-docker build -t nanobus .
-docker run -p 9000:9000 -e NANOSEC_BUS_DATABASE_URI="mongodb://nanobus:…@mongo:27017/nanobus?authSource=admin" nanobus
-```
+## Docs
 
-### Docker Compose
-Part of the top-level `docker-compose.yml`. The `bus-init` one-shot service applies
-the collection manifests and seeds the built-in catalogs before the server starts.
+- [`docs/ARCHITECTURE.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/docs/ARCHITECTURE.md) — the platform around this module
+- [`docs/DEPLOYMENT.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/docs/DEPLOYMENT.md) — ports, environment, operations
+- [`docs/README.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/docs/README.md) — every document
 
-### Standalone
-```bash
-go build ./cmd/nanobus
-./nanobus --config ~/.nanosec/bus.json
-```
+## Status
 
-## Packages
+Released as part of `v0.1.0`; the version of this module is pinned in the
+super-repo's `versions.lock`.
 
-| Package | Purpose |
-|---------|---------|
-| `cmd/nanobus` | CLI entry point (cobra commands) |
-| `internal/server` | WebSocket server, REST surface, auth proxy, message dispatch |
-| `internal/stream` | SSE chunk buffer for streaming outbound |
-| `internal/store` | MongoDB data access layer |
-| `internal/config` | Configuration types and loading |
-| `internal/log` | Custom slog log level |
-| `migrations-mongo/` | Embedded index/validator manifests (one per domain) |
+## Contributing and security
+
+Development setup and the commit rules are in
+[`CONTRIBUTING.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/CONTRIBUTING.md).
+Report a vulnerability privately as described in
+[`SECURITY.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/SECURITY.md) —
+never in a public issue.
+
+## License
+
+[AGPL-3.0](./LICENSE). The name and logo are covered separately — see
+[`NOTICE`](./NOTICE).
