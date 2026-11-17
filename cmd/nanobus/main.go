@@ -96,6 +96,7 @@ for gateway and agent connections.`,
 				opts = append(opts, server.WithRateLimit(perReplica, time.Minute))
 			}
 			srv := server.NewServer(s, opts...)
+			server.Version = version
 
 			if admins, err := s.CountActiveAdmins(); err == nil && admins == 0 {
 				slog.Warn("no administrator account yet",
