@@ -250,6 +250,14 @@ func (s *Server) restForwardTunnelRequest(w http.ResponseWriter, r *http.Request
 		switch {
 		case errors.As(err, &status) && status.Code == http.StatusNotFound:
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is not registered"})
+		case errors.As(err, &status) && status.Code >= 400 && status.Code < 500:
+			// The provisioner refused the request itself (413 for a body past
+			// the inline limit, 429 for a busy container). Passing its answer
+			// through keeps the reason; flattening it into 502 loses it.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status.Code)
+			_, _ = io.WriteString(w, status.Body)
+			return
 		case errors.Is(err, errTunnelNotRegistered):
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is not registered"})
 		default:
