@@ -14,7 +14,7 @@ ARG COMMIT=none
 ARG DATE=unknown
 ARG LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}"
 
-RUN CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o /bin/nanobus ./cmd/nanobus
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "${LDFLAGS}" -o /bin/nanobus ./cmd/nanobus
 
 FROM alpine:3.19
 
