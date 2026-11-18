@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -743,5 +744,259 @@ func TestRestVoiceTranscribe_PostsToProvider(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &payload)
 	if payload.Text != "测试文本" {
 		t.Fatalf("payload = %+v", payload)
+	}
+}
+
+// voiceProviderStub starts a provider that upgrades, answers the session.update
+// handshake, and then hands the connection to script.
+func voiceProviderStub(t *testing.T, script func(conn *websocket.Conn)) *httptest.Server {
+	t.Helper()
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		var hello map[string]any
+		if err := conn.ReadJSON(&hello); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]any{"type": "session.updated"})
+		script(conn)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// openVoiceSocket mints a session and connects a browser-shaped client to it.
+func openVoiceSocket(t *testing.T, s *Server) *websocket.Conn {
+	t.Helper()
+	mux := http.NewServeMux()
+	s.registerRESTRoutes(mux)
+	busSrv := httptest.NewServer(mux)
+	t.Cleanup(busSrv.Close)
+
+	id, err := s.mintVoiceSession(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("mint voice session: %v", err)
+	}
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(busSrv.URL, "http")+"/ws/voice?session="+id, nil)
+	if err != nil {
+		t.Fatalf("dial voice socket: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+// readVoiceEvent reads one normalized event from the relay.
+func readVoiceEvent(t *testing.T, client *websocket.Conn) voice.Event {
+	t.Helper()
+	_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, raw, err := client.ReadMessage()
+	if err != nil {
+		t.Fatalf("read voice event: %v", err)
+	}
+	var event voice.Event
+	if err := json.Unmarshal(raw, &event); err != nil {
+		t.Fatalf("decode voice event: %v", err)
+	}
+	return event
+}
+
+// TestHandleVoiceWS_KeepsTheSessionOpenAcrossUtterances is the regression for
+// "the dictation cuts off every few seconds": a provider with its own VAD
+// completes an utterance on every pause, and that completion must not end the
+// browser's session. Only the completion that follows the browser's own commit
+// does.
+func TestHandleVoiceWS_KeepsTheSessionOpenAcrossUtterances(t *testing.T) {
+	providerSrv := voiceProviderStub(t, func(conn *websocket.Conn) {
+		// Two utterances the browser never asked for.
+		for _, text := range []string{"你好", "世界"} {
+			_ = conn.WriteJSON(map[string]any{
+				"type": "conversation.item.input_audio_transcription.delta", "delta": text,
+			})
+			_ = conn.WriteJSON(map[string]any{
+				"type": "conversation.item.input_audio_transcription.completed", "transcript": text,
+			})
+		}
+		// The last utterance only finishes once the browser stops.
+		for {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg map[string]any
+			_ = json.Unmarshal(raw, &msg)
+			if msg["type"] != "input_audio_buffer.commit" {
+				continue
+			}
+			_ = conn.WriteJSON(map[string]any{
+				"type": "conversation.item.input_audio_transcription.delta", "delta": "再见",
+			})
+			_ = conn.WriteJSON(map[string]any{
+				"type": "conversation.item.input_audio_transcription.completed", "transcript": "再见",
+			})
+			<-time.After(200 * time.Millisecond)
+			return
+		}
+	})
+
+	s := testServerMongo(t)
+	seedVoiceConfig(t, s, true, "7", "qwen-realtime", "")
+	seedProvider(t, s, 7, "platform", "LLMHub", providerSrv.URL+"/v1", "sk-1")
+	client := openVoiceSocket(t, s)
+
+	var done []string
+	for len(done) < 2 {
+		event := readVoiceEvent(t, client)
+		if event.Type == voice.EventDone {
+			done = append(done, event.Text)
+		}
+	}
+	if done[0] != "你好" || done[1] != "世界" {
+		t.Fatalf("segment completions = %v, want [你好 世界]", done)
+	}
+
+	// Audio after the last completion, then the browser's own stop.
+	if err := client.WriteMessage(websocket.BinaryMessage, []byte{1, 2, 3, 4}); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte(`{"type":"commit"}`)); err != nil {
+		t.Fatalf("write commit: %v", err)
+	}
+	var final string
+	for final == "" {
+		event := readVoiceEvent(t, client)
+		if event.Type == voice.EventDone {
+			final = event.Text
+		}
+	}
+	if final != "再见" {
+		t.Fatalf("final completion = %q, want 再见", final)
+	}
+
+	// The take is over: the relay now hangs up.
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		if _, _, err := client.ReadMessage(); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatal("the relay stayed open after the browser's commit and its final completion")
+			}
+			return
+		}
+	}
+}
+
+// TestHandleVoiceWS_CommitWithNothingPendingEndsImmediately covers the stop that
+// lands right after a pause: the provider has already transcribed everything, so
+// the relay must not wait out the finalize timeout for a completion that will
+// never come.
+func TestHandleVoiceWS_CommitWithNothingPendingEndsImmediately(t *testing.T) {
+	providerSrv := voiceProviderStub(t, func(conn *websocket.Conn) {
+		// Answer the first frame of audio with a completion, so the relay sees
+		// "audio, then completion" in that order: the completion is what makes
+		// the following commit look idle.
+		for {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg map[string]any
+			_ = json.Unmarshal(raw, &msg)
+			if msg["type"] != "input_audio_buffer.append" {
+				continue
+			}
+			break
+		}
+		_ = conn.WriteJSON(map[string]any{
+			"type": "conversation.item.input_audio_transcription.completed", "transcript": "你好",
+		})
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+
+	s := testServerMongo(t)
+	seedVoiceConfig(t, s, true, "7", "qwen-realtime", "")
+	seedProvider(t, s, 7, "platform", "LLMHub", providerSrv.URL+"/v1", "sk-1")
+	client := openVoiceSocket(t, s)
+
+	// Audio the provider already transcribed: the completion resets the count of
+	// pending bytes, which is what makes the next commit look idle.
+	if err := client.WriteMessage(websocket.BinaryMessage, []byte{1, 2, 3, 4}); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	if event := readVoiceEvent(t, client); event.Type != voice.EventDone {
+		t.Fatalf("event = %+v, want the segment completion first", event)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte(`{"type":"commit"}`)); err != nil {
+		t.Fatalf("write commit: %v", err)
+	}
+
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, raw, err := client.ReadMessage()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatal("the relay kept the session open after a commit with nothing pending")
+			}
+			return // hung up, which is what commit_idle does
+		}
+		var event voice.Event
+		_ = json.Unmarshal(raw, &event)
+		if event.Type == voice.EventError {
+			t.Fatalf("the relay reported an error for an empty commit: %+v", event)
+		}
+	}
+}
+
+// TestHandleVoiceWS_ProviderErrorAfterCommitIsAWarning covers the stop path: the
+// browser is already waiting for its text, so an upstream complaint must not
+// look like a dropped connection and open another session.
+func TestHandleVoiceWS_ProviderErrorAfterCommitIsAWarning(t *testing.T) {
+	providerSrv := voiceProviderStub(t, func(conn *websocket.Conn) {
+		for {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg map[string]any
+			_ = json.Unmarshal(raw, &msg)
+			if msg["type"] != "input_audio_buffer.commit" {
+				continue
+			}
+			_ = conn.WriteJSON(map[string]any{"type": "error", "message": "the provider refused the update"})
+			<-time.After(200 * time.Millisecond)
+			return
+		}
+	})
+
+	s := testServerMongo(t)
+	seedVoiceConfig(t, s, true, "7", "qwen-realtime", "")
+	seedProvider(t, s, 7, "platform", "LLMHub", providerSrv.URL+"/v1", "sk-1")
+	client := openVoiceSocket(t, s)
+
+	if err := client.WriteMessage(websocket.BinaryMessage, []byte{1, 2, 3, 4}); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte(`{"type":"commit"}`)); err != nil {
+		t.Fatalf("write commit: %v", err)
+	}
+
+	var warning voice.Event
+	for warning.Type == "" {
+		event := readVoiceEvent(t, client)
+		switch event.Type {
+		case voice.EventWarning:
+			warning = event
+		case voice.EventError:
+			t.Fatalf("a complaint after the commit must not reach the browser as an error: %+v", event)
+		}
+	}
+	if warning.Message != "the provider refused the update" {
+		t.Fatalf("warning = %+v", warning)
 	}
 }

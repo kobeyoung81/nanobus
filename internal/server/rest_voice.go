@@ -2,17 +2,21 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
+	"gitee.com/kobeyoung81/nanobus/internal/metrics"
 	"gitee.com/kobeyoung81/nanobus/internal/voice"
 	"github.com/gorilla/websocket"
 )
@@ -470,11 +474,19 @@ func (s *Server) restVoiceRefine(w http.ResponseWriter, r *http.Request) {
 // handleVoiceWS proxies one browser dictation session to the provider's
 // realtime transcription session, turning raw PCM frames from the browser into
 // input_audio_buffer events.
+//
+// The dictation, not the provider session, owns the lifetime: a provider with
+// its own voice-activity detection completes an *utterance* every time it hears
+// a pause, and that is a segment boundary for the transcript, not the end of the
+// take. Only a completion that follows the browser's own commit — or a genuine
+// failure — ends the socket. Closing on the first completion is what made a
+// normal pause look like a dropped connection.
 func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.claimVoiceSession(r.Context(), r.URL.Query().Get("session")); !ok {
 		http.Error(w, "unknown or expired voice session", http.StatusForbidden)
 		return
 	}
+	tag := newVoiceTag()
 	cfg, provider, err := s.voiceProvider()
 	if err != nil {
 		var unavailable *errVoiceUnavailable
@@ -482,14 +494,14 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		slog.Error("voice: configuration lookup failed", "error", err)
+		slog.Error("voice: configuration lookup failed", "tag", tag, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	wsURL, err := voice.RealtimeURL(provider.BaseURL, cfg.Realtime.Model)
 	if err != nil {
-		slog.Error("voice: build realtime URL", "error", err)
+		slog.Error("voice: build realtime URL", "tag", tag, "error", err)
 		http.Error(w, "voice provider is misconfigured", http.StatusServiceUnavailable)
 		return
 	}
@@ -506,7 +518,8 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 		Rate:     voice.AudioRate,
 	})
 	if err != nil {
-		slog.Warn("voice: realtime session refused", "error", err)
+		metrics.VoiceSessions.WithLabelValues("dial_failed").Inc()
+		slog.Warn("voice: realtime session refused", "tag", tag, "error", err)
 		http.Error(w, "voice provider rejected the session", http.StatusBadGateway)
 		return
 	}
@@ -514,20 +527,54 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 
 	client, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		slog.Debug("voice: upgrade failed", "error", err)
+		metrics.VoiceSessions.WithLabelValues("upgrade_failed").Inc()
+		slog.Debug("voice: upgrade failed", "tag", tag, "error", err)
 		return
 	}
 	defer client.Close()
 
+	started := time.Now()
+	// turn_detection is the provider's own echo: "manual" means it honoured the
+	// null we sent, anything else means it kept a detector of its own and may
+	// complete utterances whenever it likes.
+	slog.Info("voice: dictation started",
+		"tag", tag,
+		"model", cfg.Realtime.Model,
+		"provider", provider.Name,
+		"host", hostOf(wsURL),
+		"audio_rate", voice.AudioRate,
+		"max_seconds", cfg.Realtime.MaxSeconds,
+		"commit_interval_ms", cfg.Realtime.CommitIntervalMS,
+		"turn_detection", upstream.TurnDetection,
+	)
+
 	committed := make(chan struct{}, 1)
 	clientGone := make(chan struct{})
-	var pushed atomic.Int64
+	var (
+		pushed          atomic.Int64
+		audioSinceDone  atomic.Int64
+		clientCommitted atomic.Bool
+	)
 	go func() {
 		defer close(clientGone)
-		pumpBrowserAudio(ctx, client, upstream, cfg.Realtime.CommitIntervalMS, committed, &pushed)
+		pumpBrowserAudio(ctx, client, upstream, cfg.Realtime.CommitIntervalMS, committed,
+			&clientCommitted, &audioSinceDone, &pushed)
 	}()
 
-	started := time.Now()
+	segments, warnings, failures := 0, 0, 0
+	end := func(reason string) {
+		metrics.VoiceSessions.WithLabelValues(reason).Inc()
+		slog.Info("voice: dictation ended",
+			"tag", tag,
+			"reason", reason,
+			"seconds", int(time.Since(started).Seconds()),
+			"audio_bytes", pushed.Load(),
+			"segments", segments,
+			"warnings", warnings,
+			"errors", failures,
+		)
+	}
+
 	events := upstream.Events(ctx)
 	var finalize <-chan time.Time
 	for {
@@ -536,65 +583,128 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 			_ = client.WriteMessage(websocket.TextMessage, mustJSON(voice.Event{
 				Type: voice.EventError, Message: "dictation timed out",
 			}))
+			end("timeout")
 			return
 		case <-clientGone:
-			slog.Info("voice: browser closed the dictation",
-				"seconds", int(time.Since(started).Seconds()),
-				"audio_bytes", pushed.Load(),
-			)
+			end("client_close")
 			return
 		case <-committed:
+			// Nothing has been appended since the last completion: the provider
+			// already has the whole take transcribed, and waiting would only add
+			// the finalize timeout to the user's stop latency.
+			if audioSinceDone.Load() == 0 {
+				end("commit_idle")
+				return
+			}
 			finalize = time.After(finalizeTimeout)
 		case <-finalize:
 			_ = client.WriteMessage(websocket.TextMessage, mustJSON(voice.Event{
 				Type: voice.EventError, Message: "the provider did not finish the transcript",
 			}))
+			end("timeout")
 			return
 		case event, ok := <-events:
 			if !ok {
 				// The provider ended the stream (it also reports why through an
-				// error event just before this); log it so the next report of
-				// "dictation cut off" has an answer instead of a guess.
-				slog.Info("voice: provider stream ended",
-					"seconds", int(time.Since(started).Seconds()),
-					"audio_bytes", pushed.Load(),
-				)
+				// error event just before this); the summary line says whether it
+				// happened while the user was still talking.
+				end("upstream_closed")
 				return
 			}
+			metrics.VoiceEvents.WithLabelValues(event.Type).Inc()
+			originalType := event.Type
 			switch event.Type {
 			case voice.EventWarning:
-				slog.Info("voice: provider warning", "message", event.Message, "audio_bytes", pushed.Load())
+				warnings++
+				slog.Info("voice: provider warning",
+					"tag", tag, "type", event.RawType, "message", event.Message,
+					"audio_bytes", pushed.Load())
 			case voice.EventError:
-				slog.Warn("voice: provider error",
-					"message", event.Message,
-					"seconds", int(time.Since(started).Seconds()),
-					"audio_bytes", pushed.Load(),
-				)
+				if clientCommitted.Load() {
+					// The browser already stopped and is only waiting for the last
+					// transcript. Reconnecting would replay nothing, so the
+					// complaint becomes a warning and the take ends with what we
+					// already transcribed.
+					warnings++
+					slog.Info("voice: provider warning after commit",
+						"tag", tag, "type", event.RawType, "message", event.Message)
+					event = voice.Event{Type: voice.EventWarning, Message: event.Message, RawType: event.RawType}
+				} else {
+					failures++
+					slog.Warn("voice: provider error",
+						"tag", tag, "type", event.RawType, "message", event.Message,
+						"seconds", int(time.Since(started).Seconds()),
+						"audio_bytes", pushed.Load(),
+					)
+				}
 			case voice.EventDone:
-				slog.Info("voice: transcript complete",
+				segments++
+				slog.Info("voice: segment completed",
+					"tag", tag, "type", event.RawType, "segment", segments,
 					"seconds", int(time.Since(started).Seconds()),
 					"audio_bytes", pushed.Load(),
 					"chars", len(event.Text),
 				)
 			}
 			if err := client.WriteMessage(websocket.TextMessage, mustJSON(event)); err != nil {
+				end("write_failed")
 				return
 			}
-			if event.Type == voice.EventDone || event.Type == voice.EventError {
+			if event.Type == voice.EventDone {
+				audioSinceDone.Store(0)
+				if clientCommitted.Load() {
+					end("commit_done")
+					return
+				}
+			}
+			if originalType == voice.EventError {
+				if clientCommitted.Load() {
+					end("commit_error")
+				} else {
+					end("upstream_error")
+				}
 				return
 			}
 		}
 	}
 }
 
+// newVoiceTag labels one dictation's log lines so a report of "it broke" can be
+// followed through start, segments and end without guessing.
+func newVoiceTag() string {
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "0000"
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// hostOf keeps only the provider host in the log: the URL itself is harmless,
+// but a query string may carry parameters that change between sessions.
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
 // pumpBrowserAudio feeds the provider: binary frames are PCM16 at the provider's
 // rate, text frames are control messages ("commit" / "close").
+//
+// clientCommitted is set only for the browser's own commit — the relay's
+// periodic commits (commitIntervalMS > 0) are segment boundaries too, and must
+// not be mistaken for the end of the take. audioSinceDone counts the bytes
+// appended since the last completion so a commit with nothing new can end the
+// session without waiting for a completion that will never come.
 func pumpBrowserAudio(
 	ctx context.Context,
 	client *websocket.Conn,
 	upstream *voice.Session,
 	commitIntervalMS int,
 	committed chan<- struct{},
+	clientCommitted *atomic.Bool,
+	audioSinceDone *atomic.Int64,
 	pushed *atomic.Int64,
 ) {
 	// 24000 samples per second, 2 bytes per sample.
@@ -618,6 +728,7 @@ func pumpBrowserAudio(
 				return
 			}
 			pushed.Add(int64(len(payload)))
+			audioSinceDone.Add(int64(len(payload)))
 			if commitIntervalMS > 0 {
 				sinceCommit += len(payload)
 				if sinceCommit >= commitIntervalMS*bytesPerMS {
@@ -634,6 +745,7 @@ func pumpBrowserAudio(
 			}
 			switch control.Type {
 			case "commit":
+				clientCommitted.Store(true)
 				if err := upstream.Commit(); err != nil {
 					return
 				}

@@ -61,11 +61,28 @@ var (
 		Help:    "Time spent writing one stream event batch to MongoDB.",
 		Buckets: []float64{0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1},
 	})
+
+	// VoiceSessions counts dictation sessions by how they ended. A burst of
+	// client_close outcomes over one take is the signature of a browser that
+	// keeps reconnecting, which is what made "the dictation cut off" invisible
+	// in the logs.
+	VoiceSessions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "bus_voice_sessions_total",
+		Help: "Voice dictation sessions handled by the relay, by outcome.",
+	}, []string{"outcome"})
+
+	// VoiceEvents counts what the provider sent us, by kind. A dictation that
+	// produces several done events is normal (one per utterance); several
+	// sessions for one dictation is not.
+	VoiceEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "bus_voice_events_total",
+		Help: "Realtime events relayed to the browser, by kind.",
+	}, []string{"kind"})
 )
 
 func init() {
 	prometheus.MustRegister(StreamEventsWritten, StreamSubscribers, StreamWriteSeconds,
-		AgentSockets, AgentSocketPushes, RPCRequests, RateLimited)
+		AgentSockets, AgentSocketPushes, RPCRequests, RateLimited, VoiceSessions, VoiceEvents)
 }
 
 // Handler serves the Prometheus text exposition.

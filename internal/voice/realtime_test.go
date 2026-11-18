@@ -186,9 +186,9 @@ func TestSessionStreamsAudioAndEvents(t *testing.T) {
 		}
 	}
 	want := []Event{
-		{Type: EventDelta, Text: "你"},
-		{Type: EventDelta, Text: "好"},
-		{Type: EventDone, Text: "你好"},
+		{Type: EventDelta, Text: "你", RawType: "conversation.item.input_audio_transcription.delta"},
+		{Type: EventDelta, Text: "好", RawType: "conversation.item.input_audio_transcription.delta"},
+		{Type: EventDone, Text: "你好", RawType: "conversation.item.input_audio_transcription.completed"},
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -223,52 +223,60 @@ func TestEventStreamReportsProviderError(t *testing.T) {
 
 func TestNormalizeEvent(t *testing.T) {
 	cases := []struct {
-		name string
-		raw  string
-		want Event
-		ok   bool
+		name    string
+		raw     string
+		want    Event
+		rawType string
+		ok      bool
 	}{
 		{
-			name: "GA delta",
-			raw:  `{"type":"conversation.item.input_audio_transcription.delta","delta":"你好"}`,
-			want: Event{Type: EventDelta, Text: "你好"},
-			ok:   true,
+			name:    "GA delta",
+			raw:     `{"type":"conversation.item.input_audio_transcription.delta","delta":"你好"}`,
+			want:    Event{Type: EventDelta, Text: "你好"},
+			rawType: "conversation.item.input_audio_transcription.delta",
+			ok:      true,
 		},
 		{
-			name: "beta delta",
-			raw:  `{"type":"conversation.item.audio_transcript.delta","delta":"hi"}`,
-			want: Event{Type: EventDelta, Text: "hi"},
-			ok:   true,
+			name:    "beta delta",
+			raw:     `{"type":"conversation.item.audio_transcript.delta","delta":"hi"}`,
+			want:    Event{Type: EventDelta, Text: "hi"},
+			rawType: "conversation.item.audio_transcript.delta",
+			ok:      true,
 		},
 		{
-			name: "GA completed",
-			raw:  `{"type":"conversation.item.input_audio_transcription.completed","transcript":"整段"}`,
-			want: Event{Type: EventDone, Text: "整段"},
-			ok:   true,
+			name:    "GA completed",
+			raw:     `{"type":"conversation.item.input_audio_transcription.completed","transcript":"整段"}`,
+			want:    Event{Type: EventDone, Text: "整段"},
+			rawType: "conversation.item.input_audio_transcription.completed",
+			ok:      true,
 		},
 		{
-			name: "beta done falls back to text",
-			raw:  `{"type":"conversation.item.audio_transcript.done","text":"整段"}`,
-			want: Event{Type: EventDone, Text: "整段"},
-			ok:   true,
+			name:    "beta done falls back to text",
+			raw:     `{"type":"conversation.item.audio_transcript.done","text":"整段"}`,
+			want:    Event{Type: EventDone, Text: "整段"},
+			rawType: "conversation.item.audio_transcript.done",
+			ok:      true,
 		},
 		{
-			name: "committing an already-dealt-with buffer is a warning, not an error",
-			raw:  `{"type":"error","error":{"type":"invalid_request_error","message":"Error committing input audio buffer, maybe no invalid audio stream."}}`,
-			want: Event{Type: EventWarning, Message: "Error committing input audio buffer, maybe no invalid audio stream."},
-			ok:   true,
+			name:    "committing an already-dealt-with buffer is a warning, not an error",
+			raw:     `{"type":"error","error":{"type":"invalid_request_error","message":"Error committing input audio buffer, maybe no invalid audio stream."}}`,
+			want:    Event{Type: EventWarning, Message: "Error committing input audio buffer, maybe no invalid audio stream."},
+			rawType: "error",
+			ok:      true,
 		},
 		{
-			name: "error with nested message",
-			raw:  `{"type":"error","error":{"message":"boom"}}`,
-			want: Event{Type: EventError, Message: "boom"},
-			ok:   true,
+			name:    "error with nested message",
+			raw:     `{"type":"error","error":{"message":"boom"}}`,
+			want:    Event{Type: EventError, Message: "boom"},
+			rawType: "error",
+			ok:      true,
 		},
 		{
-			name: "error without a message",
-			raw:  `{"type":"error"}`,
-			want: Event{Type: EventError, Message: "provider error"},
-			ok:   true,
+			name:    "error without a message",
+			raw:     `{"type":"error"}`,
+			want:    Event{Type: EventError, Message: "provider error"},
+			rawType: "error",
+			ok:      true,
 		},
 		{name: "session.updated is not forwarded", raw: `{"type":"session.updated"}`, ok: false},
 		{name: "unknown event", raw: `{"type":"response.output_item.added"}`, ok: false},
@@ -280,6 +288,7 @@ func TestNormalizeEvent(t *testing.T) {
 			if ok != tc.ok {
 				t.Fatalf("normalizeEvent ok = %v, want %v", ok, tc.ok)
 			}
+			tc.want.RawType = tc.rawType
 			if got != tc.want {
 				t.Fatalf("normalizeEvent = %+v, want %+v", got, tc.want)
 			}
@@ -303,5 +312,63 @@ func TestCommitNoiseIsNotAnError(t *testing.T) {
 		if got := commitNoise(tc.message); got != tc.want {
 			t.Errorf("commitNoise(%q) = %v, want %v", tc.message, got, tc.want)
 		}
+	}
+}
+
+func TestDialRecordsTheProvidersTurnDetection(t *testing.T) {
+	srv := stubWS(t, func(_ *websocket.Conn, _ map[string]any, send func(any)) {
+		send(map[string]any{
+			"type": "session.updated",
+			"session": map[string]any{
+				"audio": map[string]any{
+					"input": map[string]any{"turn_detection": "server_vad"},
+				},
+			},
+		})
+		<-time.After(2 * time.Second)
+	}, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := Dial(ctx, wsURL(srv), "", Settings{Model: "qwen-realtime"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer session.Close()
+
+	if session.TurnDetection != "server_vad" {
+		t.Fatalf("TurnDetection = %q, want server_vad: the log line is what tells an operator the provider kept its own VAD", session.TurnDetection)
+	}
+}
+
+func TestDialReadsAManualTurnAsManual(t *testing.T) {
+	srv := stubWS(t, func(_ *websocket.Conn, _ map[string]any, send func(any)) {
+		send(map[string]any{
+			"type":    "session.updated",
+			"session": map[string]any{"audio": map[string]any{"input": map[string]any{"turn_detection": nil}}},
+		})
+		<-time.After(2 * time.Second)
+	}, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := Dial(ctx, wsURL(srv), "", Settings{Model: "qwen-realtime"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer session.Close()
+
+	if session.TurnDetection != "manual" {
+		t.Fatalf("TurnDetection = %q, want manual", session.TurnDetection)
+	}
+}
+
+func TestEmptyBufferComplaintIsNoiseWithoutTheWordCommit(t *testing.T) {
+	event, ok := normalizeEvent([]byte(`{"type":"error","message":"input audio buffer is empty"}`))
+	if !ok {
+		t.Fatal("the empty-buffer complaint must be normalized, not dropped")
+	}
+	if event.Type != EventWarning {
+		t.Fatalf("event = %+v, want a warning", event)
 	}
 }
