@@ -650,6 +650,14 @@ func (s *Server) handleVoiceWS(w http.ResponseWriter, r *http.Request) {
 				end("write_failed")
 				return
 			}
+			// A warning after the browser's commit (the provider saying the buffer
+			// was already committed, which is what a stop after a pause looks like)
+			// means there is nothing left to wait for. Without this the stop would
+			// sit out the whole finalize timeout for a completion that cannot come.
+			if event.Type == voice.EventWarning && clientCommitted.Load() {
+				end("commit_idle")
+				return
+			}
 			if event.Type == voice.EventDone {
 				audioSinceDone.Store(0)
 				if clientCommitted.Load() {

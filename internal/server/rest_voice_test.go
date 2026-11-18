@@ -1000,3 +1000,64 @@ func TestHandleVoiceWS_ProviderErrorAfterCommitIsAWarning(t *testing.T) {
 		t.Fatalf("warning = %+v", warning)
 	}
 }
+
+// TestHandleVoiceWS_EmptyCommitAfterStopEndsImmediately is the probe's finding:
+// stopping after a pause makes the provider reject the (redundant) commit with
+// its empty-buffer complaint. The take is complete; the relay must end there
+// instead of waiting out the finalize timeout.
+func TestHandleVoiceWS_EmptyCommitAfterStopEndsImmediately(t *testing.T) {
+	providerSrv := voiceProviderStub(t, func(conn *websocket.Conn) {
+		for {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg map[string]any
+			_ = json.Unmarshal(raw, &msg)
+			if msg["type"] != "input_audio_buffer.commit" {
+				continue
+			}
+			_ = conn.WriteJSON(map[string]any{
+				"type":    "error",
+				"message": "Error committing input audio buffer, maybe no invalid audio stream.",
+			})
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	s := testServerMongo(t)
+	seedVoiceConfig(t, s, true, "7", "qwen-realtime", "")
+	seedProvider(t, s, 7, "platform", "LLMHub", providerSrv.URL+"/v1", "sk-1")
+	client := openVoiceSocket(t, s)
+
+	if err := client.WriteMessage(websocket.BinaryMessage, []byte{1, 2, 3, 4}); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	if err := client.WriteMessage(websocket.TextMessage, []byte(`{"type":"commit"}`)); err != nil {
+		t.Fatalf("write commit: %v", err)
+	}
+
+	started := time.Now()
+	_ = client.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		_, raw, err := client.ReadMessage()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatal("the relay waited out the finalize timeout on an empty commit")
+			}
+			break
+		}
+		var event voice.Event
+		_ = json.Unmarshal(raw, &event)
+		if event.Type == voice.EventError {
+			t.Fatalf("an empty commit must not surface as an error: %+v", event)
+		}
+	}
+	if time.Since(started) > 3*time.Second {
+		t.Fatalf("the session took %s to end after an empty commit", time.Since(started))
+	}
+}
